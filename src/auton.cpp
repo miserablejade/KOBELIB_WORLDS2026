@@ -14,7 +14,7 @@ float endtime = 0;
 float starttime = 0;
 
 // ANGULAR PID CONSTANTS
-float  TKP = 0.275; //2; //0.29
+float  TKP = 0.316; //2; //0.29
 float  TKI = 0.01; //0.01
 float  TKD = 2; //19.25; //1.9
 
@@ -23,19 +23,19 @@ float HKP = TKP;
 float HKD = TKD;
 
 // LINEAR PID CONSTANTS
-float YKP = 0.4;
-float YKI = 0.1;
-float YKD = 0.28;
+float YKP = 1.3;
+float YKI = 0;
+float YKD = 10;
 
 // ARC CORRECTION CONSTANTS
 float ARC_CT_KP = 1;  // cross-track P (distance from arc)
-float ARC_HDG_KP = 1; // heading P (alignment with arc tangent)
+float ARC_HDG_KP = 0.6; // heading P (alignment with arc tangent)
 
 // SLEW
 float slew = 0;
 
 //TRACK WIDTH - Important for arcs and BLRS Curvature calculations (which is the curveTo backend)
-float trackwidth = 11;
+float trackwidth = 11.75;
 
 //Default speed caps
 float ymaxSpeed = 12.7;
@@ -111,10 +111,10 @@ float angleDiff(float target, float current) {
 ///////////////////////////////////////////////////////////////////////////////////////
 
 // Sensor offsets (distance from sensor to tracking center)
-double sensor1Offset = 18.3;
-double sensor2Offset = 15.7;
-double sensor3Offset = 17.9;
-double sensor4Offset = 17.87;
+double sensor1Offset = 18.97;
+double sensor2Offset = 0;
+double sensor3Offset = 19.1;
+double sensor4Offset = 18.7;
 
 void readWall(int wall, int sensor, bool bypassSettleDelay = false) {
   rightdrive.stop(brake);
@@ -589,8 +589,8 @@ void sweepOnRightToPoint(float x, float y, float sweepRatio, float breakang = 8,
 //  /_/    \_\_|  \_\\_____|_____/ 
 /////////////////////////////////////
 
-void arcTo(float x1, float y1, float x2, float y2, float speed = ymaxSpeed, float breakLength = 5, bool backward = false, float arcCtKP = ARC_CT_KP, float arcHdgKP = ARC_HDG_KP, float alignMargin = 20) {
-  move.arc(x1, y1, x2, y2, speed, breakLength, arcCtKP, arcHdgKP, alignMargin, backward);
+void arcTo(float x1, float y1, float x2, float y2, float speed = ymaxSpeed, float breakLength = 5, bool backward = false, float arcCtKP = ARC_CT_KP, float arcHdgKP = ARC_HDG_KP, float alignMargin = 8) {
+  move.arc(x1, y1, x2, y2, speed, breakLength, arcCtKP, arcHdgKP, alignMargin, backward, TKP, TKI, TKD, amaxSpeed);
 }
 
 ///////////////////////////////////////////////////////
@@ -674,46 +674,40 @@ void delayedDrop(double dropIn, double dropFor = 0) {
   runDelayedDrop = true;
 }
 
-bool runDistanceToPointDrop = false;
-double dropPointX = 0;
-double dropPointY = 0;
-double dropDistanceFromPoint = 0;
+double dropX1 = 0, dropY1 = 0, dropDist1 = 0, dropTime1 = 0;
+double dropX2 = 0, dropY2 = 0, dropDist2 = 0, dropTime2 = 0;
+bool drop1Active = false, drop2Active = false;
 
-void distanceToPointDrop(double pointX, double pointY, double distanceFromPoint, double dropFor = 0) {
-  runDistanceToPointDrop = true;
-  dropPointX = pointX;
-  dropPointY = pointY;
-  dropDistanceFromPoint = distanceFromPoint;
-  dropMatchloaderFor = dropFor;
+void distanceToPointDrop(double x1, double y1, double dist1, double time1, double x2 = 0, double y2 = 0, double dist2 = 0, double time2 = 0) {
+  dropX1 = x1; dropY1 = y1; dropDist1 = dist1; dropTime1 = time1;
+  drop1Active = true;
+  if (dist2 > 0) {
+    dropX2 = x2; dropY2 = y2; dropDist2 = dist2; dropTime2 = time2;
+    drop2Active = true;
+  }
 }
 
 int delayedMatchloaderDropFcn() {
   while (true) {
-    if (runDelayedDrop) {
-    delay(dropMatchloaderIn);
-    matchloaderDown();
-      if (dropMatchloaderFor > 0) {
-        delay(dropMatchloaderFor);
-        matchloaderUp();
-        dropMatchloaderFor = 0;
-      }
-    runDelayedDrop = false; 
-    } 
-
-    if (runDistanceToPointDrop) {
-      double distanceFromPoint = sqrt(pow(chassis.x - dropPointX, 2) + pow(chassis.y - dropPointY, 2));
-
-      if (distanceFromPoint <= dropDistanceFromPoint) {
+    if (drop1Active) {
+      double dist = sqrt(pow(chassis.x - dropX1, 2) + pow(chassis.y - dropY1, 2));
+      if (dist <= dropDist1) {
         matchloaderDown();
-        if (dropMatchloaderFor > 0) {
-          delay(dropMatchloaderFor);
-          matchloaderUp();
-        }
-        runDistanceToPointDrop = false;
+        if (dropTime1 > 0) { delay(dropTime1); matchloaderUp(); }
+        drop1Active = false;
       }
     }
 
-  vex::this_thread::sleep_for(10);
+    if (drop2Active) {
+      double dist = sqrt(pow(chassis.x - dropX2, 2) + pow(chassis.y - dropY2, 2));
+      if (dist <= dropDist2) {
+        matchloaderDown();
+        if (dropTime2 > 0) { delay(dropTime2); matchloaderUp(); }
+        drop2Active = false;
+      }
+    }
+
+    vex::this_thread::sleep_for(10);
   }
   return(0);
 }
@@ -722,18 +716,12 @@ void SmallTest(){
   auto_settings();
   ymaxSpeed = 12.7;
   hmaxSpeed = ymaxSpeed;
-  slew = 12.7;
+  slew = 0;
   bangbangDist = 0;
 
-  chassis.setPos(-48,0,180);
-  intakeMode = intake;
-
-  trackwidth = 11;
-  modifyArcGains(1, 0.4);
-  arcTo(0, -48, 48, 0, 8, 12, false);
-  face(0);
-  leftdrive.stop(brake);
-  rightdrive.stop(brake);
+  chassis.setPos(-24,0,180);
+  
+  arcTo(0, -36, 24, 0, 8);
 
   delay(5000000);
 }
@@ -750,11 +738,11 @@ void HookProcedure() {
   float originalHeading = chassis.h;
 
   modifyAngularPID(TKP*100, TKD*0);
-  swingOnLeft(originalHeading-45, 5);
+  swingOnRight(originalHeading+47, 5);
   revertToOriginalPIDs();
   // driveForward(6);
   revertToOriginalPIDs(); 
-  face(originalHeading-5);
+  face(originalHeading+7);
 
 }
 
@@ -773,7 +761,7 @@ void arpit() {
   intakeMode = intake;
   midDescoreDown();
 
-  hook1Down();
+  hookDown();
 
   dropMatchloaderIn = 450;
   dropMatchloaderFor = 0;
@@ -808,7 +796,7 @@ void arpit() {
   move.voldrive(-8,-8);
   delay(700);
 
-  hook1Down();
+  hookDown();
   face(135);
   modifyLateralPID(YKP*5, 0);
   driveForward(6.5, 135);
@@ -829,7 +817,7 @@ void tenB(bool hook) {
   intakeMode = intake;
   midDescoreDown();
 
-  hook1Down();
+  hookDown();
 
   chassis.setPos(-13, -45.82,0);
 
@@ -869,7 +857,7 @@ void tenB(bool hook) {
   chassis.setPos(-48,-18.62,180);
 
   if (hook) {
-    hook1Down();
+    hookDown();
     face(135);
     modifyLateralPID(YKP*5, 0);
     driveForward(6.5, 135);
@@ -889,7 +877,7 @@ void tenBRight() {
   intakeMode = intake;
   midDescoreDown();
 
-  hook1Down();
+  hookDown();
 
   chassis.setPos(13, -45.82,0);
 
@@ -929,7 +917,7 @@ void tenBRight() {
   delay(700);
   chassis.setPos(-46,-18.62,180);
 
-  hook1Down();
+  hookDown();
   face(135);
   modifyLateralPID(YKP*5, YKD*0);
   driveForward(6.5, 135);
@@ -945,7 +933,7 @@ void tenBRight() {
 }
 
 void hookInsurance(bool reset = true) {
-  hook1Up();
+  hookUp();
 
   matchloaderDown();
 
@@ -995,9 +983,9 @@ void SOLO() {
   bangbangDist = 0;
   intakeMode = intake;
 
-  hook1Up();
+  hookUp();
 
-  chassis.setPos(0, 0, 90);
+  chassis.setPos(0,0,90);
   readWall(1, 2, true);
   readWall(4, 1, true);
 
@@ -1096,7 +1084,7 @@ void rightSplit() {
   bangbangDist = 0;
   intakeMode = intake;
 
-  hook1Up();
+  hookUp();
 
   chassis.setPos(0,0,90);
   readWall(1, 2, true);
@@ -1144,7 +1132,7 @@ void rightSplit() {
 
   moveTo(38, -28, true, 10);
   face(0);
-  hook1Down();
+  hookDown();
   driveForward(10);
   delay(5000000);
 }
@@ -1158,7 +1146,7 @@ void twoMidGoals() {
   intakeMode = intake;
   midDescoreDown();
 
-  hook1Up();
+  hookUp();
 
   chassis.setPos(-13, -45.82,0);
 
@@ -1191,7 +1179,6 @@ void twoMidGoals() {
 
   sweepOnLeftToPoint(20, -20, 0.2, 8, true);
   moveTo(20, -20, true, 8);
-  hook2Up();
 
   spitIn = 200;
   intakeMode = spit;
@@ -1202,7 +1189,6 @@ void twoMidGoals() {
   delay(300);
   spitIn = 0;
 
-  hook2Down();
   intakeMode = intake;
 
   move.bigTime = 100;
@@ -1215,9 +1201,9 @@ void twoMidGoals() {
   face(170);
   delay(100);
 
-  hook1Down();
+  hookDown();
   driveForward(32, 170);
-  hook1Up();
+  hookUp();
 
   face(180);
   readWall(3, 1);
@@ -1262,7 +1248,7 @@ void sixRushSplit() {
   ymaxSpeed = 12.7;
   moveTo(-36, -27, false,10);
   face(180);
-  hook1Down();
+  hookDown();
   driveBackward(24);
   leftdrive.stop(hold);
   rightdrive.stop(hold);

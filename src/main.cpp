@@ -14,9 +14,8 @@ controller Controller = controller(primary);
 std::string currentAuton;
 
 // Rollers
-motor intakeRollers = motor(PORT11, ratio6_1, false);
-motor secondRollers = motor(PORT12, ratio18_1, true);
-motor scoreRoller = motor(PORT12, ratio18_1, true);
+motor intakeRollers = motor(PORT12, ratio6_1, true);
+motor upperRollers = motor(PORT11, ratio6_1, false);
 
 // Chassis
 motor fl = motor(PORT13, ratio6_1, true);
@@ -31,8 +30,8 @@ motor_group leftdrive = motor_group(fl, ml, bl);
 motor_group rightdrive = motor_group(fr, mr, br);
 
 // Odometry and Heading
-inertial IMU1 = inertial(PORT17);
-inertial IMU2 = inertial(PORT17);
+inertial IMU1 = inertial(PORT5);
+inertial IMU2 = inertial(PORT5);
 
 rotation TX = rotation(PORT6, false);
 rotation TY = rotation(PORT21, true);
@@ -66,9 +65,8 @@ distance ChamberDistSensor = distance(PORT15);
 optical OtwColorSensor = optical(PORT11);
 
 //Pistons
-digital_out hook1 = digital_out(Brain.ThreeWirePort.E);
-digital_out hook2 = digital_out(Brain.ThreeWirePort.D);
-digital_out hood = digital_out(Brain.ThreeWirePort.A);
+digital_out hood = digital_out(Brain.ThreeWirePort.E);
+digital_out hook = digital_out(Brain.ThreeWirePort.A);
 digital_out matchloader = digital_out(Brain.ThreeWirePort.D);
 digital_out midDescore = digital_out(Brain.ThreeWirePort.C);
 digital_out intakeLift = digital_out(Brain.ThreeWirePort.B);
@@ -95,46 +93,158 @@ bool r2released = false;
 
 bool noOtherButtonPressed = true;
 
-int controllerButtonMonitoringFcn() {
-  bool prevL1 = false, prevL2 = false, prevR1 = false, prevR2 = false;
+bool l1NewPress = false;
+bool l2NewPress = false;
+bool r1NewPress = false;
+bool r2NewPress = false;
+bool upNewPress = false;
+bool downNewPress = false;
+bool leftNewPress = false;
+bool rightNewPress = false;
+bool aNewPress = false;
+bool bNewPress = false;
+bool xNewPress = false;
+bool yNewPress = false;
 
-  while (true) {
-    bool curL1 = Controller.ButtonL1.pressing();
-    bool curL2 = Controller.ButtonL2.pressing();
-    bool curR1 = Controller.ButtonR1.pressing();
-    bool curR2 = Controller.ButtonR2.pressing();
+bool l1JustReleased = false;
+bool l2JustReleased = false;
+bool r1JustReleased = false;
+bool r2JustReleased = false;
+bool upJustReleased = false;
+bool downJustReleased = false;
+bool leftJustReleased = false;
+bool rightJustReleased = false;
+bool aJustReleased = false;
+bool bJustReleased = false;
+bool xJustReleased = false;
+bool yJustReleased = false;
 
-    // Classify each button on its rising edge — stays stable until released
-    if (curL1 && !prevL1) {
-      bool combo = l2Pressed_first || r1Pressed_first || r2Pressed_first;
-      l1Pressed_first = !combo; l1Pressed_second = combo;
-    }
-    if (!curL1) { l1Pressed_first = false; l1Pressed_second = false; }
+// How long each button has been continuously held (ms), 0 when not pressed
+uint32_t l1HeldFor = 0, l2HeldFor = 0, r1HeldFor = 0, r2HeldFor = 0;
+uint32_t upHeldFor = 0, downHeldFor = 0, leftHeldFor = 0, rightHeldFor = 0;
+uint32_t aHeldFor = 0, bHeldFor = 0, xHeldFor = 0, yHeldFor = 0;
 
-    if (curL2 && !prevL2) {
-      bool combo = l1Pressed_first || r1Pressed_first || r2Pressed_first;
-      l2Pressed_first = !combo; l2Pressed_second = combo;
-    }
-    if (!curL2) { l2Pressed_first = false; l2Pressed_second = false; }
+// Snapshot of how long the button was held at the moment it was released (ms).
+// Valid for one cycle alongside xxxJustReleased, then resets to 0.
+uint32_t l1PressTime = 0, l2PressTime = 0, r1PressTime = 0, r2PressTime = 0;
+uint32_t upPressTime = 0, downPressTime = 0, leftPressTime = 0, rightPressTime = 0;
+uint32_t aPressTime = 0, bPressTime = 0, xPressTime = 0, yPressTime = 0;
 
-    if (curR1 && !prevR1) {
-      bool combo = l1Pressed_first || l2Pressed_first || r2Pressed_first;
-      r1Pressed_first = !combo; r1Pressed_second = combo;
-    }
-    if (!curR1) { r1Pressed_first = false; r1Pressed_second = false; }
+bool l1Exhausted = false, l2Exhausted = false, r1Exhausted = false, r2Exhausted = false;
 
-    if (curR2 && !prevR2) {
-      bool combo = l1Pressed_first || l2Pressed_first || r1Pressed_first;
-      r2Pressed_first = !combo; r2Pressed_second = combo;
-    }
-    if (!curR2) { r2Pressed_first = false; r2Pressed_second = false; }
+void controllerButtonMonitoringFcn() {
+  static bool prevL1 = false, prevL2 = false, prevR1 = false, prevR2 = false;
+  static bool prevUp = false, prevDown = false, prevLeft = false, prevRight = false;
+  static bool prevA = false, prevB = false, prevX = false, prevY = false;
+  static uint32_t lastTickTime = vex::timer::system();
 
-    noOtherButtonPressed = !(curL1 || curL2 || curR1 || curR2);
+  bool curL1 = Controller.ButtonL1.pressing();
+  bool curL2 = Controller.ButtonL2.pressing();
+  bool curR1 = Controller.ButtonR1.pressing();
+  bool curR2 = Controller.ButtonR2.pressing();
+  bool curUp = Controller.ButtonUp.pressing();
+  bool curDown = Controller.ButtonDown.pressing();
+  bool curLeft = Controller.ButtonLeft.pressing();
+  bool curRight = Controller.ButtonRight.pressing();
+  bool curA = Controller.ButtonA.pressing();
+  bool curB = Controller.ButtonB.pressing();
+  bool curX = Controller.ButtonX.pressing();
+  bool curY = Controller.ButtonY.pressing();
+  uint32_t now = vex::timer::system();
 
-    prevL1 = curL1; prevL2 = curL2; prevR1 = curR1; prevR2 = curR2;
-    vex::this_thread::sleep_for(5);
+  // New press detection (true for one cycle only)
+  l1NewPress = (curL1 && !prevL1);
+  l2NewPress = (curL2 && !prevL2);
+  r1NewPress = (curR1 && !prevR1);
+  r2NewPress = (curR2 && !prevR2);
+  upNewPress = (curUp && !prevUp);
+  downNewPress = (curDown && !prevDown);
+  leftNewPress = (curLeft && !prevLeft);
+  rightNewPress = (curRight && !prevRight);
+  aNewPress = (curA && !prevA);
+  bNewPress = (curB && !prevB);
+  xNewPress = (curX && !prevX);
+  yNewPress = (curY && !prevY);
+
+  // Just released detection (true for one cycle only)
+  l1JustReleased = (!curL1 && prevL1);
+  l2JustReleased = (!curL2 && prevL2);
+  r1JustReleased = (!curR1 && prevR1);
+  r2JustReleased = (!curR2 && prevR2);
+  upJustReleased = (!curUp && prevUp);
+  downJustReleased = (!curDown && prevDown);
+  leftJustReleased = (!curLeft && prevLeft);
+  rightJustReleased = (!curRight && prevRight);
+  aJustReleased = (!curA && prevA);
+  bJustReleased = (!curB && prevB);
+  xJustReleased = (!curX && prevX);
+  yJustReleased = (!curY && prevY);
+
+  // Snapshot hold duration on release (valid for one cycle alongside xxxJustReleased)
+  l1PressTime = l1JustReleased ? l1HeldFor : 0;
+  l2PressTime = l2JustReleased ? l2HeldFor : 0;
+  r1PressTime = r1JustReleased ? r1HeldFor : 0;
+  r2PressTime = r2JustReleased ? r2HeldFor : 0;
+  upPressTime = upJustReleased ? upHeldFor : 0;
+  downPressTime = downJustReleased ? downHeldFor : 0;
+  leftPressTime = leftJustReleased ? leftHeldFor : 0;
+  rightPressTime = rightJustReleased ? rightHeldFor : 0;
+  aPressTime = aJustReleased ? aHeldFor : 0;
+  bPressTime = bJustReleased ? bHeldFor : 0;
+  xPressTime = xJustReleased ? xHeldFor : 0;
+  yPressTime = yJustReleased ? yHeldFor : 0;
+
+  // Reset exhausted flags on release
+  if (l1JustReleased) l1Exhausted = false;
+  if (l2JustReleased) l2Exhausted = false;
+  if (r1JustReleased) r1Exhausted = false;
+  if (r2JustReleased) r2Exhausted = false;
+
+  // Held-for tracking — accumulates while pressed, resets to 0 on release
+  l1HeldFor = curL1 ? (l1HeldFor + (now - lastTickTime)) : 0;
+  l2HeldFor = curL2 ? (l2HeldFor + (now - lastTickTime)) : 0;
+  r1HeldFor = curR1 ? (r1HeldFor + (now - lastTickTime)) : 0;
+  r2HeldFor = curR2 ? (r2HeldFor + (now - lastTickTime)) : 0;
+  upHeldFor = curUp ? (upHeldFor + (now - lastTickTime)) : 0;
+  downHeldFor = curDown ? (downHeldFor + (now - lastTickTime)) : 0;
+  leftHeldFor = curLeft ? (leftHeldFor + (now - lastTickTime)) : 0;
+  rightHeldFor = curRight ? (rightHeldFor + (now - lastTickTime)) : 0;
+  aHeldFor = curA ? (aHeldFor + (now - lastTickTime)) : 0;
+  bHeldFor = curB ? (bHeldFor + (now - lastTickTime)) : 0;
+  xHeldFor = curX ? (xHeldFor + (now - lastTickTime)) : 0;
+  yHeldFor = curY ? (yHeldFor + (now - lastTickTime)) : 0;
+
+  // Classify each button on its rising edge — stays stable until released
+  if (curL1 && !prevL1) {
+    bool combo = l2Pressed_first || r1Pressed_first || r2Pressed_first;
+    l1Pressed_first = !combo; l1Pressed_second = combo;
   }
-  return 0;
+  if (!curL1) { l1Pressed_first = false; l1Pressed_second = false; }
+
+  if (curL2 && !prevL2) {
+    bool combo = l1Pressed_first || r1Pressed_first || r2Pressed_first;
+    l2Pressed_first = !combo; l2Pressed_second = combo;
+  }
+  if (!curL2) { l2Pressed_first = false; l2Pressed_second = false; }
+
+  if (curR1 && !prevR1) {
+    bool combo = l1Pressed_first || l2Pressed_first || r2Pressed_first;
+    r1Pressed_first = !combo; r1Pressed_second = combo;
+  }
+  if (!curR1) { r1Pressed_first = false; r1Pressed_second = false; }
+
+  if (curR2 && !prevR2) {
+    bool combo = l1Pressed_first || l2Pressed_first || r1Pressed_first;
+    r2Pressed_first = !combo; r2Pressed_second = combo;
+  }
+  if (!curR2) { r2Pressed_first = false; r2Pressed_second = false; }
+
+  noOtherButtonPressed = !(curL1 || curL2 || curR1 || curR2);
+
+  prevL1 = curL1; prevL2 = curL2; prevR1 = curR1; prevR2 = curR2;
+  prevUp = curUp; prevDown = curDown; prevLeft = curLeft; prevRight = curRight;
+  prevA = curA; prevB = curB; prevX = curX; prevY = curY;
+  lastTickTime = now;
 }
 
 bool midDescoreIsUp;
@@ -157,74 +267,87 @@ void midDescoreToggle() {
   }
 }
 
-void hook1Up() {
-  hook1.set(0);
+void hookUp() {
+  hook.set(1);
 }
 
-void hook1Down() {
-  hook1.set(1);
-}
-
-void hook2Up() {
-  hook2.set(1);
-}
-
-void hook2Down() {
-  hook2.set(0);
+void hookDown() {
+  hook.set(0);
 }
 
 void hoodUp() {
-  hood.set(0);
-}
-
-void hoodDown() {
   hood.set(1);
 }
 
+void hoodDown() {
+  hood.set(0);
+}
+
+bool matchloaderIsDown = false;
 void matchloaderUp() {
   matchloader.set(0);
+  matchloaderIsDown = false;
 }
 
 void matchloaderDown() {
   matchloader.set(1);
+  matchloaderIsDown = true;
 }
+
+void liftOdom() {
+  odomLift.set(0);
+}
+
+void dropOdom() {
+  odomLift.set(1);
+}
+
+bool fourBarUp = false;
+
+void raise4bar() {
+  intakeLift.set(0);
+  fourBarUp = true;
+}
+
+void drop4bar() {
+  intakeLift.set(1);
+  fourBarUp = false;
+}
+
+
+
+
+
+
 
 void coastAllRollers() {
   intakeRollers.stop(coast);
-  secondRollers.stop(coast);
-  scoreRoller.stop(coast);
+  upperRollers.stop(coast);
 }
 
 void intakeFcn() {
   intakeRollers.spin(forward, 100, percent);
-  secondRollers.spin(forward, 100, percent);
+  upperRollers.spin(forward, 100, percent);
 }
 
-void longGoalFcn() {
-  intakeLift.set(false);
+void scoreFcn() {
   intakeRollers.spin(forward, 100, percent);
-  secondRollers.spin(forward, 100, percent);
-  scoreRoller.spin(forward, 100, percent);
+  upperRollers.spin(forward, 100, percent);
 }
 
 void spitFcn() {
   intakeRollers.spin(reverse, 100, percent);
-  secondRollers.spin(reverse, 100, percent);
+  upperRollers.spin(reverse, 100, percent);
 }
-
 
 double lowGoalSpeed = 20;
-void lowGoalFcn() {
+void lowGoalFcn(bool suspendUpper = false) {
     intakeRollers.spin(reverse, lowGoalSpeed, percent);
-    secondRollers.spin(reverse, 100, percent);
-}
-
-void midGoalFcn(int speed) {
-  intakeLift.set(true);
-  hood.set(true);
-  intakeRollers.spin(forward, 100, percent);
-  secondRollers.spin(forward, 100, percent);
-  scoreRoller.spin(forward, speed, percent);
+    if (suspendUpper) {
+      upperRollers.stop(coast);
+    } else {
+      upperRollers.spin(reverse, 100, percent);
+    }
 }
 
 //Intake monitor variables
@@ -235,8 +358,6 @@ bool readingBlue = false;
 
 bool blockOtwIsRed = false;
 bool blockOtwIsBlue = false;
-
-bool blockInChamber = false;
 
 //Color sensor threshold constants
 double redThresholdUpper = 12;
@@ -264,9 +385,6 @@ IntakeMode intakeMode = coasting;
 //Color sort toggles
 ColorSortMode colorSortMode = none;
 
-//hook1 mode
-bool hook1Mode = false;
-
 //Mid goal speed
 int midGoalSpeed = 100;
 
@@ -281,229 +399,97 @@ double startPrimingAfter = 0;
 bool startPrimingLowGoal = false;
 double spitIn = 0;
 
-bool suspendScoreRoller = false;
+bool suspendUpperRollers = false;
 bool slowLongGoal = false;
 
+bool justDropped4Bar = true;
+
+bool wasJustIntaking = false;
+
+double score3Time = 500;
+
 bool firstLongGoal = false;
+bool dump3 = false;
 
 // Intake Control Task
 int magControlFcn() {
   while (true) {
-    intakeRollers.setVelocity(100, percent);
-    secondRollers.setVelocity(100, percent);
     switch (intakeMode) {
       case (intake):
-        if (purgingDuringStore && (colorSortMode == teamRedColorSort) && blockOtwIsBlue) { //Used to be && !blockInChamber
-          //If a bad block comes in during storing, purge it (RED TEAM)
-          secondRollers.stop(hold);
-          intakeRollers.stop(hold);
-          scoreRoller.spin(reverse, 100, percent);
-          Controller.rumble(".");
-          delay(reverseTimeLongSort);
-
-        } else if (purgingDuringStore && (colorSortMode == teamBlueColorSort) && blockOtwIsRed) { //Used to be && !blockInChamber
-          //If a bad block comes in during storing, purge it (BLUE TEAM)
-          secondRollers.stop(hold);
-          intakeRollers.stop(hold);
-          scoreRoller.spin(reverse, 100, percent);
-          Controller.rumble(".");
-          delay(reverseTimeLongSort);
-        } else {
           intakeFcn();
-          scoreRoller.stop(hold);
-        }
+          wasJustIntaking = true;
 
-        firstLongGoal = true;
         break;
 
       case (spit):
-        if (spitIn > 0) {
-          delay(spitIn);
-          spitIn = 0;
-        }
         spitFcn();
 
-        firstLongGoal = true;
         break;
 
       case (lowGoal):
-        if (not suspendScoreRoller) {
-          scoreRoller.spin(reverse, 100, percent);
+        if (suspendUpperRollers) {
+          lowGoalFcn(true);
         } else {
-          scoreRoller.stop(coast);
+          lowGoalFcn(false);
         }
 
-        if (intakeRollers.velocity(rpm) == 0) {
-          intakeRollers.spin(forward, 100, percent);
-          delay(50);
-          lowGoalFcn();
-          delay(50);
-
-        }
-        lowGoalFcn();
-
-        firstLongGoal = true;
         break;
 
       case (coasting):
         coastAllRollers();
+        if (wasJustIntaking) {
+          upperRollers.spin(forward, 100, percent); //make sure the blocks are pressing against the hood, makes scoring more consistent
+          delay(500);
+        }
+        wasJustIntaking = false;
+
         break;
 
       case (longGoal):
-        // if (firstLongGoal) {
-        //   spitFcn();
-        //   scoreRoller.stop(hold);
-        //   delay(100);
-        //   scoreRoller.spin(forward, 100, percent);
-        //   delay(100);
-        //   intakeFcn();
-        //   scoreRoller.spin(forward, 100, percent);
-        //   delay(200);
+        scoreFcn();
         
+        if (firstLongGoal) { //first long goal bool is controlled in usercontrol
+          delay(score3Time); //If this is the first time r2 is being pressed, give it delay so it automatically dumps 3
+          firstLongGoal = false;
+        }
 
-        if (blockInChamber) {
-          spitFcn();
-          scoreRoller.stop(hold);
+        if (dump3) { //If preston already let go of r2, that means he only tapped r2 and its going to be a quick dump
+          upperRollers.spin(reverse, 100, percent);
           delay(100);
-          scoreRoller.spin(forward, 100, percent);
-          delay(100);
-          intakeFcn();
-          scoreRoller.spin(forward, 100, percent);
-          delay(200);
-          
-
-        } else {
-          intakeFcn();
-          scoreRoller.spin(forward, 100, percent);
+          dump3 = false;
         }
 
-        if (slowLongGoal) {
-          intakeFcn();
-          scoreRoller.spin(forward, 50, percent);
-        }
-
-        if (intakeRollers.velocity(rpm) < 20) {
-          intakeRollers.spin(reverse, 100, percent);
-          delay(200);
-          scoreRoller.spin(forward, 100, percent);
-          intakeRollers.spin(forward, 100, percent);
-          delay(200);
-        }
-
-        if (secondRollers.velocity(rpm) < 10) {
-          intakeRollers.spin(forward, 100, percent);
-          scoreRoller.spin(forward, 100, percent);
-
-          secondRollers.spin(reverse, 100, percent);
-          delay(200);
-          secondRollers.spin(forward, 100, percent);
-          delay(200);
-        }
-
-        if (scoreRoller.velocity(rpm) < 10) {
-          intakeRollers.spin(forward, 100, percent);
-          secondRollers.spin(forward, 100, percent);
-
-          scoreRoller.spin(reverse, 100, percent);
-          delay(200);
-          scoreRoller.spin(forward, 100, percent);
-          delay(200);
-        }
-
-        firstLongGoal = false;
         break;
 
       case (midGoal):
-        if (midDescoreIsUp) {
-          midDescoreDown();
-          delay(300);
-        }
-
-        if (colorSortMode == teamRedColorSort && blockOtwIsBlue) {
-          scoreRoller.spin(forward, 100, percent);
-          intakeFcn();
-          Controller.rumble(".");
-          delay(reverseTimeMidSort);
-
-        } else if (colorSortMode == teamBlueColorSort && blockOtwIsRed) {
-          scoreRoller.spin(forward, 100, percent);
-          intakeFcn();
-          Controller.rumble(".");
-          delay(reverseTimeMidSort);
-          
-        } else {
-          midGoalFcn(100);
-          delay(100);
-            if (scoreRoller.velocity(rpm) > -10) {
-              secondRollers.spin(reverse, 100, percent);
-              scoreRoller.spin(forward, 100, percent);
-              delay(200);
-
-              secondRollers.spin(forward, 100, percent);
-              scoreRoller.spin(reverse, 100, percent);
-              delay(100);
-            }
-        }
-
-        firstLongGoal = true;
+        scoreFcn();
         break;
 
       case (midGoalSlow):
-        midGoalFcn(80);
 
-        firstLongGoal = true;
         break;
 
       case (truncatedIntake):
         intakeRollers.spin(forward, 100, percent);
+        upperRollers.stop(coast);
 
-        firstLongGoal = true;
-        break;
-
-      case (primeLowGoal):
-        if (startPrimingLowGoal) {
-          scoreRoller.stop(hold);
-          intakeFcn();
-          delay(startPrimingAfter);
-
-          startPrimingLowGoal = false;
-        }
-        scoreRoller.stop(hold);
-        intakeRollers.spin(forward, 100, percent);
-        secondRollers.spin(reverse, 13, percent);
-
-        firstLongGoal = true;
-        break;
-
-      case (purgeOne):
-        coastAllRollers();
-        hoodUp();
-        delay(300);
-        hoodDown();
-
-        firstLongGoal = true;
         break;
 
       case (topStageJamInsurance):
         intakeRollers.spin(forward, 100, percent);
-        scoreRoller.stop(hold);
 
-        secondRollers.spin(reverse, 100, percent);
+        upperRollers.spin(reverse, 100, percent);
         delay(200);
-        secondRollers.spin(forward, 100, percent);
+        upperRollers.spin(forward, 100, percent);
         delay(200);
 
-        firstLongGoal = true;
         break;
+    }
 
-      case (antiSpill):
-        intakeRollers.stop(brake);
-        secondRollers.stop(brake);
-        scoreRoller.spin(reverse, 50, percent);
-
-        firstLongGoal = true;
-        break;
-
+    if (justDropped4Bar) {
+      upperRollers.spin(reverse, 100, percent);
+      delay(200);
+      justDropped4Bar = false;
     }
 
     vex::this_thread::sleep_for(10);
@@ -540,9 +526,6 @@ int magMonitorFcn() {
       blockOtwIsRed = false;
       blockOtwIsBlue = false;
     }
-
-    //Is there a block in the chamber?
-    if (ChamberDistSensor.objectDistance(inches) < chamberDistanceThreshold) {blockInChamber = true;} else {blockInChamber = false;}
 
     vex::this_thread::sleep_for(10);
   }
@@ -673,7 +656,6 @@ int brainScreenTaskFcn() {
 void vexcodeInit(void) {
 
   task controllerScreen(controllerScreenTask);
-  task controllerButtonMonitoringTask(controllerButtonMonitoringFcn);
 
   task magControlTask(magControlFcn);
   task magMonitorTask(magMonitorFcn);
@@ -687,9 +669,13 @@ void vexcodeInit(void) {
   OtwColorSensor.setLight(ledState::on);
   OtwColorSensor.integrationTime(5);
 
+  dropOdom();
   matchloaderUp();
-  hook1Down();
-  hoodDown();
+  hookDown();
+
+  colorSortMode = none;
+  intakeMode = coasting;
+  fourBarUp = true;
 }
 
 competition Competition;
@@ -710,10 +696,13 @@ void pre_auton(void) {
   move.autondriveenabled = false;
 }
 
+bool didAuton = false;
 int autonIndex = 3;
 
 void autonomous(void) {
   move.autondriveenabled = true;
+
+  didAuton = true;
 
   // hkMovement();
   // sixRushSplit();
@@ -879,38 +868,23 @@ void curvatureDriveFcn() {
 
 
 
-
-
-bool driverActive = false;
-bool driverAutonSkills = true;
-
 void usercontrol(void) {
+  
+  bool hookUnlocked;
 
-  bool lastButtonLeftState = false;
-  static bool lastDown = false;          // rising edge detector  
+  if (didAuton) {
+    hookUnlocked = true;
+  } else {
+    hookUnlocked = false;
+  }
 
-  // Matchloader toggle variables
-  static bool matchloaderState = true;  // toggle state for B
-  static bool lastB = false;             // rising edge detector for B
-  static uint32_t last_B_time = 0;       // debounce timestamp
+  while (true) {
+    //BUTTON MONITOR////////////////////////////////////
+    controllerButtonMonitoringFcn();
+    ////////////////////////////////////////////////////
 
-  bool hook1Unlocked = false;
-  bool hook2Unlocked = false;
-  bool justUsedL1Macro = false;
 
-  // R2 tap → midDescore toggle
-  static bool lastR2First = false;
-  static bool r2WasCombo = false;
-
-  colorSortMode = none;
-
-  hook1Unlocked = false;
-
-  // move.autondriveenabled = true; // enable autonomous chassis control
-  move.autondriveenabled = false; // disable autonomous chassis control
-  driverActive = true;
-
-  while (driverActive) {
+    //DRIVE CHOICE//////////////////////////////////////
     if (arcadeDrive) {
       arcadeDriveFcn();
     }
@@ -918,105 +892,140 @@ void usercontrol(void) {
     if (curvatureDrive) {
       curvatureDriveFcn();
     }
-    
+    ////////////////////////////////////////////////////
+
+    //INTAKE////////////////////////////////////////////
     if (l2Pressed_first) {
+      hoodDown();
+      raise4bar();
+      midDescoreDown();
       intakeMode = intake;
     }
 
+    /////////////////////////////////////////////////////
+
+    //SPIT///////////////////////////////////////////////
     if (l1Pressed_first) {
+      midDescoreUp();
       intakeMode = spit;
     } 
 
+    /////////////////////////////////////////////////////
+
+    //MID GOAL//////////////////////////////////////////
     if (r1Pressed_first) {
-      intakeMode = midGoal;
+      if (fourBarUp) {
+        drop4bar();
+        justDropped4Bar = true;
+        r1Exhausted = true;
+      } else if (not r1Exhausted) {
+        intakeMode = midGoal;
+      }
     }
 
+    if (r1JustReleased) {
+      r1Exhausted = false;
+    }
+
+    /////////////////////////////////////////////////////
+
+    //LONG GOAL//////////////////////////////////////////
     if (r2Pressed_first) {
-      intakeMode = longGoal;
+      if (not fourBarUp) {
+        raise4bar(); // just raise, don't score
+        r2Exhausted = true;
+      } else if (not r2Exhausted) {
+        hoodUp();
+        matchloaderUp();
+        intakeMode = longGoal;
+      }
     }
 
+    if (r2JustReleased) {
+      r2Exhausted = false;
+    }
+
+    if (r2JustReleased && r2PressTime < score3Time) {
+      dump3 = true;
+    }
+
+    if (r2NewPress) {
+      firstLongGoal = true;
+    }
+
+    /////////////////////////////////////////////////////
+
+    //COASTING///////////////////////////////////////////
     if (not l2Pressed_first && not r2Pressed_first && not r1Pressed_first) {
       intakeMode = coasting;
+      firstLongGoal = false;
     }
 
-    /*if (l1Pressed_first) {
-      hook1Down();
-      hook1Unlocked = true;
+    /////////////////////////////////////////////////////
+
+    //HOOK///////////////////////////////////////////////
+    if (Controller.ButtonDown.pressing()) {
+      hookDown();
+      hookUnlocked = true; 
     } else {
-      if (hook1Unlocked) {
-        hook1Up();
+      if (hookUnlocked) {
+        hookUp();
       }
-    }*/
+    }
 
-    if (Controller.ButtonB.pressing()) {
-      hook1.set(!hook1.value());
-      wait(150, msec); // debounce
-    } 
+    /////////////////////////////////////////////////////
 
+    //HOOK MACRO!////////////////////////////////////////
     if (Controller.Axis2.position(percent) > 90) {
       move.autondriveenabled = true;
       HookProcedure();
       move.autondriveenabled = false;
     }
 
-    if (Controller.ButtonX.pressing()) {
-      hook1Down();
-      move.autondriveenabled = true;
-      leaveGoal();
-      move.autondriveenabled = false;
+    /////////////////////////////////////////////////////
+
+    //MID DESCORE////////////////////////////////////////
+    if (Controller.ButtonB.pressing()) {
+      midDescoreUp();
+    } else {
+      midDescoreDown();
     }
 
-    //Color sort carousel control
-    bool currentButtonLeftState = Controller.ButtonLeft.pressing();
-    if (currentButtonLeftState && !lastButtonLeftState) { 
+    /////////////////////////////////////////////////////
+
+    //COLOR SORT CONTROL//////////////////////////////////
+    if (leftNewPress) {
       if (colorSortMode == none) {
         colorSortMode = teamRedColorSort;
-        Controller.rumble(".");
       } else if (colorSortMode == teamRedColorSort) {
         colorSortMode = teamBlueColorSort;
-        Controller.rumble(".");
       } else if (colorSortMode == teamBlueColorSort) {
         colorSortMode = none;
-        Controller.rumble("-");
       }
-    }
-    lastButtonLeftState = currentButtonLeftState;
 
-    // Matchloader toggle (Button Down) - rising edge + 100ms debounce (ts was chatgpt)
-    bool b = Controller.ButtonDown.pressing();
-    uint32_t now_B = vex::timer::system();
-    if (b && !lastB && (now_B - last_B_time > 100)) {
-      matchloaderState = !matchloaderState;
-      if (matchloaderState) {
+      if (didAuton) {
+        colorSortMode = none;
+      }
+
+      Controller.rumble(".");
+    }
+
+    /////////////////////////////////////////////////////
+
+    //MATCHLOADER CONTROL////////////////////////////////
+    if (yNewPress) {
+      if (matchloaderIsDown) {
         matchloaderUp();
       } else {
         matchloaderDown();
       }
-      Controller.rumble("."); // feedback
-      last_B_time = now_B;
-    }
-    lastB = b;
-
-    if (Controller.ButtonLeft.pressing()) {
-      if (colorSortMode == teamRedColorSort) {
-        colorSortMode = teamBlueColorSort;
-      }
-
-      else if (colorSortMode == teamBlueColorSort) {
-        colorSortMode = none;
-      }
-
-      else if (colorSortMode == none) {
-        colorSortMode = teamRedColorSort;
-      }
-
-      delay(100);
     }
 
-    if (Controller.ButtonRight.pressing()) {
+    /////////////////////////////////////////////////////
+
+    if (rightNewPress) {
       autonIndex += 1;
       Controller.rumble(".");
-      delay(500);
     }
 
     if (autonIndex == 0) {
