@@ -430,7 +430,7 @@ int magControlFcn() {
           intakeFcn();
           Controller.rumble(".");
           delay(reverseTimeMidSort);
-
+          
         } else {
           midGoalFcn(100);
           delay(100);

@@ -997,7 +997,7 @@ void SOLO() {
 
   hook1Up();
 
-  chassis.setPos(0,0,90);
+  chassis.setPos(0, 0, 90);
   readWall(1, 2, true);
   readWall(4, 1, true);
 
