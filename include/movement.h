@@ -9,6 +9,7 @@
 class movement {
 private:
   bool first = false;
+  bool hasExitedTurnOnly = false;
 
 public:
   float leftpower, rightpower, turndisablelength = 3;
@@ -26,8 +27,12 @@ public:
   // was 315
   float x_point = 0, y_point = 0;
   bool backwards = false;
+  int turnDir = 0; // 0 = auto, 1 = CW, 2 = CCW
+  bool ptpCosineScaling = false;
 
   float intakeTarg = 0;
+
+  bool seamlessTransitions = false;
 
   // ===== Boomerang state =====
   float boomerang_target_x = 0;
@@ -54,6 +59,53 @@ public:
   bool boomerang_in_final_phase = false;
   float boomerang_settle_count = 0;
 
+  // ===== Inception Boomerang state =====
+  float ib_target_x = 0;
+  float ib_target_y = 0;
+  float ib_target_heading = 0;   // desired final heading in degrees
+  bool ib_backwards = false;
+
+  // Carrot geometry
+  float ib_dLead = 15.0;         // fixed distance behind endpoint for initial carrot (inches)
+  float ib_gLead = 0.5;          // ghost interpolation factor (0 = ghost tracks carrot, 1 = ghost stays at initial carrot)
+
+  // Initial carrot position (set once at start, never changes)
+  float ib_initial_carrot_x = 0;
+  float ib_initial_carrot_y = 0;
+
+  // Current (retracted) carrot position
+  float ib_carrot_x = 0;
+  float ib_carrot_y = 0;
+
+  // Carrot retraction tracking
+  float ib_min_carrot_dist = 0;   // smallest distance ever achieved to carrot
+  float ib_init_carrot_dist = 0;  // distance to carrot at movement start
+
+  // Phase thresholds (inches) — tune these
+  float ib_close_end_dist = 8.0;     // distance to carrot that triggers "near" phase
+  float ib_close_ghost_dist = 20.0;  // distance to ghost that triggers "mid" phase
+  float ib_parallel_dist = 8.0;      // distance to endpoint below which heading switches from face(end) to parallel(end)
+
+  // Phase latches
+  bool ib_close_end = false;
+  bool ib_close_ghost = false;
+
+  // PID voltage limits
+  float ib_drive_max_voltage = 12.0;
+  float ib_heading_max_voltage = 12.0;
+  float ib_min_voltage = 0;
+
+  // Settlement
+  float ib_settle_error = 3.0;   // inches — distance threshold for settle counting
+  float ib_settle_heading = 5.0; // degrees — heading threshold for settle counting
+  float ib_settle_count = 0;
+  bool ib_settled = false;
+
+  // Timeout
+  float ib_timeout = 0;
+  float ib_start_time = 0;
+  bool ib_timed_out = false;
+
   // ===== Arc state =====
   float arc_cx = 0, arc_cy = 0;
   float arc_radius = 0;
@@ -63,8 +115,15 @@ public:
 
   float turnPIDinput(float targ) { return chassis.wrapangle(targ - chassis.h); }
 
+  float applyTurnDir(float error) {
+    if (turnDir != 0 && fabs(error) <= 5) turnDir = 0; // passed through target, stop forcing direction
+    if (turnDir == 1 && error < 0) error += 360;      // force CW
+    else if (turnDir == 2 && error > 0) error -= 360;  // force CCW
+    return error;
+  }
+
   void spotTurnCalc() {
-    float pow = turnPID.calculate(turnPIDinput(chassis.htarg));
+    float pow = turnPID.calculate(applyTurnDir(turnPIDinput(chassis.htarg)));
     leftpower = pow, rightpower = -1 * pow;
   }
 
@@ -72,34 +131,34 @@ public:
     chassis.htarg = chassis.pointangle(x_point, y_point);
     float pow = 0;
     if (!backwards)
-      pow = turnPID.calculate(turnPIDinput(chassis.htarg));
+      pow = turnPID.calculate(applyTurnDir(turnPIDinput(chassis.htarg)));
     if (backwards)
-      pow = turnPID.calculate(turnPIDinput(chassis.htarg + 180));
+      pow = turnPID.calculate(applyTurnDir(turnPIDinput(chassis.htarg + 180)));
     leftpower = pow, rightpower = -1 * pow;
   }
   void swingOnLeftCalc() {
-    float pow = turnPID.calculate(turnPIDinput(chassis.htarg));
+    float pow = turnPID.calculate(applyTurnDir(turnPIDinput(chassis.htarg)));
     leftpower = pow, rightpower = pow * sweep_ratio;
   }
   void swingOnLefttoPointCalc() {
     float pow =
-        turnPID.calculate(turnPIDinput(chassis.pointangle(x_point, y_point)));
+        turnPID.calculate(applyTurnDir(turnPIDinput(chassis.pointangle(x_point, y_point))));
     if (backwards)
       pow = turnPID.calculate(
-          turnPIDinput(chassis.pointangle(x_point, y_point) + 180));
+          applyTurnDir(turnPIDinput(chassis.pointangle(x_point, y_point) + 180)));
     leftpower = -pow * sweep_ratio, rightpower = -pow;
   }
   void swingOnRightCalc() {
-    float pow = turnPID.calculate(turnPIDinput(chassis.htarg));
+    float pow = turnPID.calculate(applyTurnDir(turnPIDinput(chassis.htarg)));
     leftpower = -pow * sweep_ratio, rightpower = -pow;
   }
 
   void swingOnRighttoPointCalc() {
     float pow =
-        turnPID.calculate(turnPIDinput(chassis.pointangle(x_point, y_point)));
+        turnPID.calculate(applyTurnDir(turnPIDinput(chassis.pointangle(x_point, y_point))));
     if (backwards)
       pow = turnPID.calculate(
-          turnPIDinput(chassis.pointangle(x_point, y_point) + 180));
+          applyTurnDir(turnPIDinput(chassis.pointangle(x_point, y_point) + 180)));
     leftpower = pow, rightpower = pow * sweep_ratio;
   }
 
@@ -128,6 +187,16 @@ public:
     float pow = drivePID.calculate(
         straightpower(straightlinegoal, startingtrackervalue));
     float hpow = turnPID.calculate(turnPIDinput(chassis.htarg));
+    // TURN-PRIORITY DESATURATION: if drive + turn exceeds 12.7V, reduce drive
+    // to make room for turn. Prevents drivePID.minOutput from starving the turn.
+    // FUTURE: replace with cosine heading scaling (ypow *= cos(headingError))
+    // for smoother behavior, keep this as a hard backstop.
+    float maxNeeded = fabs(pow) + fabs(hpow);
+    if (maxNeeded > 12.7) {
+      float available = 12.7 - fabs(hpow);
+      if (available < 0) available = 0;
+      pow = available * signum(pow);
+    }
     leftpower = pow + hpow, rightpower = pow - hpow;
   }
 
@@ -139,6 +208,13 @@ public:
     if (backwards)
       hpow = turnPID.calculate(
           turnPIDinput(chassis.pointangle(x_point, y_point) + 180));
+    // TURN-PRIORITY DESATURATION (see straightheadingcalc for details)
+    float maxNeeded = fabs(pow) + fabs(hpow);
+    if (maxNeeded > 12.7) {
+      float available = 12.7 - fabs(hpow);
+      if (available < 0) available = 0;
+      pow = available * signum(pow);
+    }
     leftpower = pow + hpow, rightpower = pow - hpow;
   }
 
@@ -269,10 +345,179 @@ public:
     }
   }
 
+  void inceptionBoomerangCalc() {
+    // ---- Current pose ----
+    float dx_target = ib_target_x - chassis.x;
+    float dy_target = ib_target_y - chassis.y;
+    float target_distance = sqrt(dx_target * dx_target + dy_target * dy_target);
+
+    // ---- Carrot retraction ----
+    // Track the minimum distance ever achieved to the carrot
+    float dx_carrot = ib_carrot_x - chassis.x;
+    float dy_carrot = ib_carrot_y - chassis.y;
+    float carrot_distance = sqrt(dx_carrot * dx_carrot + dy_carrot * dy_carrot);
+
+    if (carrot_distance < ib_min_carrot_dist) {
+      ib_min_carrot_dist = carrot_distance;
+    }
+
+    // Retract carrot toward endpoint proportionally
+    float retract_ratio = (ib_init_carrot_dist > 0.001)
+                            ? ib_min_carrot_dist / ib_init_carrot_dist
+                            : 0.0;
+    float target_angle_rad = TO_RAD(ib_target_heading);
+    ib_carrot_x = ib_target_x - retract_ratio * sin(target_angle_rad) * ib_dLead;
+    ib_carrot_y = ib_target_y - retract_ratio * cos(target_angle_rad) * ib_dLead;
+
+    // Recompute carrot distance after retraction
+    dx_carrot = ib_carrot_x - chassis.x;
+    dy_carrot = ib_carrot_y - chassis.y;
+    carrot_distance = sqrt(dx_carrot * dx_carrot + dy_carrot * dy_carrot);
+
+    // ---- Ghost point ----
+    // Interpolate between initial carrot and current (retracted) carrot
+    // gLead=0: ghost = carrot (no lag), gLead=1: ghost = initial carrot (max lag)
+    float ghost_x = ib_initial_carrot_x + (ib_carrot_x - ib_initial_carrot_x) * (1.0 - ib_gLead);
+    float ghost_y = ib_initial_carrot_y + (ib_carrot_y - ib_initial_carrot_y) * (1.0 - ib_gLead);
+
+    float dx_ghost = ghost_x - chassis.x;
+    float dy_ghost = ghost_y - chassis.y;
+    float ghost_distance = sqrt(dx_ghost * dx_ghost + dy_ghost * dy_ghost);
+
+    // ---- 3-phase target selection ----
+    // Phases latch: once a phase activates, the robot never goes back.
+    // Phase 1 (far):  steer toward ghost
+    // Phase 2 (mid):  steer toward carrot (ghost is close)
+    // Phase 3 (near): steer toward endpoint, then parallel to target heading
+
+    float heading_error = 0;
+    float drive_error = 0;
+
+    // Check phase transitions (latching)
+    if (carrot_distance < ib_close_end_dist) {
+      ib_close_end = true;
+    }
+    if (!ib_close_end && ghost_distance < ib_close_ghost_dist) {
+      ib_close_ghost = true;
+    }
+
+    if (ib_close_end) {
+      // PHASE 3 — Near endpoint
+      drive_error = target_distance;
+
+      if (target_distance < ib_parallel_dist) {
+        // Very close: align heading parallel to target heading (stop pointing at endpoint)
+        heading_error = chassis.wrapangle(ib_target_heading - chassis.h);
+      } else {
+        // Close but not there yet: face the endpoint
+        float angle_to_end = TO_DEG(atan2(dx_target, dy_target));
+        if (ib_backwards) {
+          heading_error = chassis.wrapangle(angle_to_end + 180 - chassis.h);
+        } else {
+          heading_error = chassis.wrapangle(angle_to_end - chassis.h);
+        }
+      }
+    } else if (ib_close_ghost) {
+      // PHASE 2 — Mid: face the carrot
+      drive_error = carrot_distance;
+
+      float angle_to_carrot = TO_DEG(atan2(dx_carrot, dy_carrot));
+      if (ib_backwards) {
+        heading_error = chassis.wrapangle(angle_to_carrot + 180 - chassis.h);
+      } else {
+        heading_error = chassis.wrapangle(angle_to_carrot - chassis.h);
+      }
+    } else {
+      // PHASE 1 — Far: face the ghost
+      drive_error = carrot_distance;
+
+      float angle_to_ghost = TO_DEG(atan2(dx_ghost, dy_ghost));
+      if (ib_backwards) {
+        heading_error = chassis.wrapangle(angle_to_ghost + 180 - chassis.h);
+      } else {
+        heading_error = chassis.wrapangle(angle_to_ghost - chassis.h);
+      }
+    }
+
+    // ---- Distance error switching ----
+    // In closeEnd phase, or if robot has passed the carrot, use distance to endpoint
+    if (ib_close_end || target_distance < carrot_distance) {
+      drive_error = target_distance;
+    } else {
+      drive_error = carrot_distance;
+    }
+
+    // ---- Drive PID ----
+    float drive_output = drivePID.calculate(drive_error);
+    if (ib_backwards) drive_output = -drive_output;
+
+    // ---- Cosine heading scaling (ONLY in near/endpoint phase) ----
+    if (ib_close_end && target_distance < ib_parallel_dist) {
+      float heading_scale = cos(TO_RAD(heading_error));
+      drive_output *= heading_scale;
+    }
+
+    // ---- Heading PID ----
+    float heading_output = turnPID.calculate(heading_error);
+
+    // ---- Clamp outputs ----
+    if (fabs(drive_output) > ib_drive_max_voltage) {
+      drive_output = ib_drive_max_voltage * signum(drive_output);
+    }
+    if (fabs(heading_output) > ib_heading_max_voltage) {
+      heading_output = ib_heading_max_voltage * signum(heading_output);
+    }
+
+    // Min voltage: only when roughly aligned (|heading_error| < ~45 deg)
+    if (ib_min_voltage > 0 && fabs(cos(TO_RAD(heading_error))) > 0.7 &&
+        fabs(drive_output) > 0.01 && fabs(drive_output) < ib_min_voltage) {
+      drive_output = ib_min_voltage * signum(drive_output);
+    }
+
+    // ---- Angular priority rescaling ----
+    // If combined output exceeds 12V, reduce drive to preserve heading correction
+    float rescale = fabs(drive_output) + fabs(heading_output) - 12.0;
+    if (rescale > 0) {
+      drive_output -= rescale * signum(drive_output);
+    }
+
+    // ---- Combine to left/right ----
+    float left_output = drive_output + heading_output;
+    float right_output = drive_output - heading_output;
+
+    // Ratio-preserving saturation scaling (max speed enforcement)
+    float max_motor = fmax(fabs(left_output), fabs(right_output));
+    if (max_motor > ib_drive_max_voltage) {
+      float ratio = ib_drive_max_voltage / max_motor;
+      left_output *= ratio;
+      right_output *= ratio;
+    }
+
+    leftpower = left_output;
+    rightpower = right_output;
+
+    // ---- Settlement tracking ----
+    if (target_distance < ib_settle_error &&
+        fabs(chassis.wrapangle(ib_target_heading - chassis.h)) < ib_settle_heading) {
+      ib_settle_count += 10;
+      if (ib_settle_count > 200) {
+        ib_settled = true;
+      }
+    } else {
+      ib_settle_count = 0;
+    }
+
+    // ---- Timeout ----
+    if (ib_timeout > 0 &&
+        (Brain.timer(msec) - ib_start_time) > ib_timeout) {
+      ib_timed_out = true;
+    }
+  }
+
   void simplePPSCalc() {
     float pow = turnPID.calculate(turnPIDinput(chassis.pointangle()));
     float ypow = drivePID.calculate(ypower(chassis.ytarg, chassis.xtarg));
-    if (fabs(chassis.relativeangle()) > turnMargin && chassis.pointdist() > 5) {
+    if (fabs(chassis.relativeangle()) > turnMargin && chassis.pointdist() > 5 && !hasExitedTurnOnly) {
       if (turnType == 0) {
         //Spot turn
         leftpower = pow;
@@ -288,6 +533,11 @@ public:
       }
 
     } else if (chassis.pointdist() > turndisablelength) {
+      hasExitedTurnOnly = true;
+      if (ptpCosineScaling) {
+        float headingError = TO_RAD(chassis.relativeangle());
+        ypow *= cos(headingError);
+      }
       leftpower = ypow + pow, rightpower = ypow - pow;
       first = true;
 
@@ -320,6 +570,13 @@ public:
         rightpower = 0;
       }
     } else if (chassis.pointdist() > turndisablelength) {
+      // TURN-PRIORITY DESATURATION (see simplePPSCalc for details)
+      float maxNeeded = fabs(ypow) + fabs(pow);
+      if (maxNeeded > 12.7) {
+        float available = 12.7 - fabs(pow);
+        if (available < 0) available = 0;
+        ypow = available * signum(ypow);
+      }
       leftpower = ypow + pow, rightpower = ypow - pow;
       first = true;
     } else if (first == 1) {
@@ -433,6 +690,13 @@ public:
     if (chassis.length(chassis.x, chassis.y, chassis.xtarg2, chassis.ytarg2) >
         turndisablelength) {
 
+      // TURN-PRIORITY DESATURATION (see simplePPSCalc for details)
+      float maxNeeded = fabs(ypow) + fabs(pow);
+      if (maxNeeded > 12.7) {
+        float available = 12.7 - fabs(pow);
+        if (available < 0) available = 0;
+        ypow = available * signum(ypow);
+      }
       leftpower = ypow + pow;
       rightpower = ypow - pow;
 
@@ -454,6 +718,13 @@ public:
     float ypow = drivePID.calculate(ypower(chassis.ytarg, chassis.xtarg));
     if (chassis.length(chassis.x, chassis.y, chassis.xtarg2, chassis.ytarg2) >
         turndisablelength) {
+      // TURN-PRIORITY DESATURATION (see simplePPSCalc for details)
+      float maxNeeded = fabs(ypow) + fabs(pow);
+      if (maxNeeded > 12.7) {
+        float available = 12.7 - fabs(pow);
+        if (available < 0) available = 0;
+        ypow = available * signum(ypow);
+      }
       leftpower = ypow + pow;
       rightpower = ypow - pow;
 
@@ -583,14 +854,18 @@ public:
 
       if (movementtype != lastmovementtype) {
         lastmovementtype = movementtype;
+        turnPID.newPidCycle = true;
 
         if (movementtype == 0) {
 
         } else {
           //IDK WHY KOBE DEDICATED A CYCLE BETWEEN EACH MOVEMENT TO COASTING MOTORS...
-          // leftpower = 0, rightpower = 0;
-          // velocitydrive(leftpower, rightpower);
-          // drivestopping(0);
+          if (seamlessTransitions) {
+            leftpower = 0, rightpower = 0;
+            velocitydrive(leftpower, rightpower);
+            drivestopping(0);
+          }
+
         }
       } else {
         lastmovementtype = movementtype;
@@ -680,6 +955,9 @@ public:
           if (movementtype == 12) { // 12 = boomerang drive to pose
             boomerangCalc();
           }
+          if (movementtype == 14) { // 14 = inception boomerang
+            inceptionBoomerangCalc();
+          }
           if (movementtype == 13) { // 13 = circular arc
             arcCalc();
           }
@@ -690,7 +968,6 @@ public:
     }
   }
 
-  bool quickExits = false;
   void lWait(float input) { // blocks until the robot is within the a certain
                             // distance of the targets
     while (chassis.pointdist() > input) {
@@ -731,11 +1008,6 @@ public:
         break;
       }
 
-      if (bigError <= 0 && quickExits) { //QUICK TURN EXITS -Lucas
-
-        break;
-      }
-
 
 
 
@@ -747,10 +1019,21 @@ public:
   float smallE = .5;
   float bigTime = 400;
   float smallTime = 150;
-  void face(float ang, float kp, float ki, float kd, float maxSpeed,
-            float breakang) {
+  void face(float ang, float maxSpeed,
+            float breakang, int dir = 0) {
+    // full 360: chain two 180° turns
+    if (ang == 360 || ang == -360) {
+      int spinDir = (ang == 360) ? 1 : 2;  // 360 = CW, -360 = CCW
+      if (dir != 0) spinDir = dir;          // dir overrides if set
+      float mid = chassis.wrapangle(chassis.h + 180);
+      face(mid, maxSpeed, breakang, spinDir);
+      face(chassis.wrapangle(mid + 180), maxSpeed, breakang, spinDir);
+      return;
+    }
     chassis.htarg = ang;
-    turnPID.setConstants(kp, ki, kd);
+    turnDir = dir;
+    turnPID.scalePID = true;
+    turnPID.headingMode = false;
     // turnPID.setIntegral(400, 2.5);
     turnPID.maxOutput = maxSpeed;
     turnPID.reset();
@@ -760,6 +1043,7 @@ public:
     if (breakang > 0) {
       delay(10);
       turnWaitConditions(breakang, smallE, bigTime, smallTime);
+      turnDir = 0;
     }
   }
 
@@ -816,10 +1100,11 @@ public:
     Brain.Screen.drawRectangle(0, 0, 480, 240);
   }
 
-  void facePoint(float x, float y, float kp, float ki, float kd, float maxSpeed,
-                 float breakang, bool backward) {
+  void facePoint(float x, float y, float maxSpeed,
+                 float breakang, bool backward, int dir = 0) {
     turnPID.reset();
     turnPID.sumerror = 0;
+    turnDir = dir;
     if (backward) {
       backwards = true;
       chassis.htarg = chassis.pointangle(x, y) - 180;
@@ -830,7 +1115,8 @@ public:
     x_point = x;
     y_point = y;
     turnPID.reset();
-    turnPID.setConstants(kp, ki, kd);
+    turnPID.scalePID = true;
+    turnPID.headingMode = false;
     turnPID.maxOutput = maxSpeed;
     leftpower = 0, rightpower = 0;
     movementtype = 1.1;
@@ -839,13 +1125,16 @@ public:
     if (breakang > 0) {
       delay(10);
       turnWaitConditions(breakang, smallE, bigTime, smallTime);
+      turnDir = 0;
     }
   }
 
-  void swingOnRight(float ang, float kp, float ki, float kd, float maxSpeed,
-                    float breakang) {
+  void swingOnRight(float ang, float maxSpeed,
+                    float breakang, int dir = 0) {
     chassis.htarg = ang;
-    turnPID.setConstants(kp, ki, kd);
+    turnDir = dir;
+    turnPID.scalePID = true;
+    turnPID.headingMode = false;
     turnPID.setIntegral(400, 2.5);
     turnPID.maxOutput = maxSpeed;
     turnPID.reset();
@@ -855,12 +1144,14 @@ public:
     if (breakang > 0) {
       delay(10);
       turnWaitConditions(breakang, smallE, bigTime, smallTime);
+      turnDir = 0;
     }
   }
 
-  void swingOnRighttoPoint(float x, float y, float kp, float ki, float kd,
-                           float maxSpeed, float breakang, bool backward) {
+  void swingOnRighttoPoint(float x, float y,
+                           float maxSpeed, float breakang, bool backward, int dir = 0) {
     backwards = backward;
+    turnDir = dir;
 
     if (backward) {
       chassis.htarg = chassis.pointangle(x, y) + 180;
@@ -871,7 +1162,8 @@ public:
     y_point = y;
     if (backward)
       backwards = true;
-    turnPID.setConstants(kp, ki, kd);
+    turnPID.scalePID = true;
+    turnPID.headingMode = false;
     turnPID.maxOutput = maxSpeed;
     turnPID.reset();
     leftpower = 0, rightpower = 0;
@@ -880,12 +1172,14 @@ public:
     if (breakang > 0) {
       delay(10);
       turnWaitConditions(breakang, smallE, bigTime, smallTime);
+      turnDir = 0;
     }
   }
 
-  void swingOnLefttoPoint(float x, float y, float kp, float ki, float kd,
-                          float maxSpeed, float breakang, bool backward) {
+  void swingOnLefttoPoint(float x, float y,
+                          float maxSpeed, float breakang, bool backward, int dir = 0) {
     backwards = backward;
+    turnDir = dir;
 
     if (backward) {
       chassis.htarg = chassis.pointangle(x, y) + 180;
@@ -896,7 +1190,8 @@ public:
     y_point = y;
     if (backward)
       backwards = true;
-    turnPID.setConstants(kp, ki, kd);
+    turnPID.scalePID = true;
+    turnPID.headingMode = false;
     turnPID.maxOutput = maxSpeed;
     turnPID.reset();
     leftpower = 0, rightpower = 0;
@@ -905,13 +1200,16 @@ public:
     if (breakang > 0) {
       delay(10);
       turnWaitConditions(breakang, smallE, bigTime, smallTime);
+      turnDir = 0;
     }
   }
 
-  void swingOnLeft(float ang, float kp, float ki, float kd, float maxSpeed,
-                   float breakang) {
+  void swingOnLeft(float ang, float maxSpeed,
+                   float breakang, int dir = 0) {
     chassis.htarg = ang;
-    turnPID.setConstants(kp, ki, kd);
+    turnDir = dir;
+    turnPID.scalePID = true;
+    turnPID.headingMode = false;
     turnPID.setIntegral(400, 2.5);
     turnPID.maxOutput = maxSpeed;
     turnPID.reset();
@@ -921,6 +1219,7 @@ public:
     if (breakang > 0) {
       delay(10);
       turnWaitConditions(breakang, smallE, bigTime, smallTime);
+      turnDir = 0;
     }
   }
 
@@ -1007,7 +1306,8 @@ public:
     drivePID.slewAmount = slew;
     straightlinegoal = dist;
     drivePID.setConstants(kp, drivePID.ki, kd);
-    turnPID.setConstants(hkp, 0, hkd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     drivePID.maxOutput = maxSpeed;
     chassis.htarg = htarget;
     turnPID.maxOutput = maxSpeed;
@@ -1052,7 +1352,8 @@ public:
     drivePID.slewAmount = slew;
     straightlinegoal = dist;
     drivePID.setConstants(kp, drivePID.ki, kd);
-    turnPID.setConstants(hkp, 0, hkd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     drivePID.maxOutput = maxSpeed;
     turnPID.maxOutput = maxSpeed;
     if (backward)
@@ -1087,7 +1388,8 @@ public:
     turnPID.reset();
 
     drivePID.setConstants(drive_kp, drivePID.ki, drive_kd);
-    turnPID.setConstants(heading_kp, 0, heading_kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     drivePID.maxOutput = drive_max_voltage;
     turnPID.maxOutput = heading_max_voltage;
     drivePID.slewAmount = slew_rate;
@@ -1139,6 +1441,95 @@ public:
     }
   }
 
+  void inceptionBoomerang(float x, float y, float target_heading, bool backward,
+                          float drive_kp, float drive_kd,
+                          float heading_kp, float heading_kd,
+                          float drive_max_voltage, float heading_max_voltage,
+                          float dLead, float gLead,
+                          float min_voltage, float settle_error,
+                          float slew_rate, float timeout,
+                          float close_end_dist, float close_ghost_dist,
+                          float parallel_dist, float exit_dist) {
+
+    // Reset PIDs
+    drivePID.reset();
+    turnPID.reset();
+    drivePID.setConstants(drive_kp, drivePID.ki, drive_kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
+    drivePID.maxOutput = drive_max_voltage;
+    turnPID.maxOutput = heading_max_voltage;
+    drivePID.slewAmount = slew_rate;
+
+    // Set target pose
+    ib_target_x = x;
+    ib_target_y = y;
+    ib_target_heading = target_heading;
+    ib_backwards = backward;
+
+    // Carrot geometry
+    ib_dLead = dLead;
+    ib_gLead = gLead;
+
+    // Compute initial carrot position (behind endpoint along target heading)
+    float target_angle_rad = TO_RAD(target_heading);
+    ib_initial_carrot_x = x - sin(target_angle_rad) * dLead;
+    ib_initial_carrot_y = y - cos(target_angle_rad) * dLead;
+    ib_carrot_x = ib_initial_carrot_x;
+    ib_carrot_y = ib_initial_carrot_y;
+
+    // Initialize carrot retraction distances
+    float dx = ib_carrot_x - chassis.x;
+    float dy = ib_carrot_y - chassis.y;
+    ib_init_carrot_dist = sqrt(dx * dx + dy * dy);
+    ib_min_carrot_dist = ib_init_carrot_dist;
+
+    // Phase thresholds
+    ib_close_end_dist = close_end_dist;
+    ib_close_ghost_dist = close_ghost_dist;
+    ib_parallel_dist = parallel_dist;
+
+    // Voltage limits
+    ib_drive_max_voltage = drive_max_voltage;
+    ib_heading_max_voltage = heading_max_voltage;
+    ib_min_voltage = min_voltage;
+
+    // Reset phase latches
+    ib_close_end = false;
+    ib_close_ghost = false;
+
+    // Reset settlement
+    ib_settle_error = settle_error;
+    ib_settle_count = 0;
+    ib_settled = false;
+
+    // Timeout
+    ib_timeout = timeout;
+    ib_start_time = Brain.timer(msec);
+    ib_timed_out = false;
+
+    // Activate
+    leftpower = 0;
+    rightpower = 0;
+    movementtype = 14;
+    stopdrive(0);
+
+    // Blocking wait
+    if (exit_dist > 0) {
+      delay(10);
+      while (true) {
+        if (ib_settled) break;
+        if (ib_timed_out) break;
+
+        float ddx = ib_target_x - chassis.x;
+        float ddy = ib_target_y - chassis.y;
+        if (sqrt(ddx * ddx + ddy * ddy) < exit_dist) break;
+
+        delay(10);
+      }
+    }
+  }
+
   // move.to() IS HERE (tuffest function oat)
   void to(float x, float y, float yspeed, float hspeed, float ykp, float hkp,
           float slew, float breakLength) {
@@ -1150,8 +1541,10 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     leftpower = 0, rightpower = 0;
+    hasExitedTurnOnly = false;
     movementtype = 4;
     stopdrive(0);
     if (breakLength > 0) {
@@ -1171,8 +1564,10 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     leftpower = 0, rightpower = 0;
+    hasExitedTurnOnly = false;
     movementtype = 4;
     stopdrive(0);
     if (breakLength > 0) {
@@ -1190,7 +1585,8 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     leftpower = 0, rightpower = 0;
     movementtype = 5;
     stopdrive(0);
@@ -1210,7 +1606,8 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     leftpower = 0, rightpower = 0;
     movementtype = 5;
     stopdrive(0);
@@ -1231,7 +1628,8 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     leftpower = 0, rightpower = 0;
     movementtype = 5;
     stopdrive(0);
@@ -1251,7 +1649,8 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     trackwidth = T;
     turndisablelength = turnEnd;
     turnMargin = relativeAng;
@@ -1274,7 +1673,8 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     trackwidth = T;
     turndisablelength = turnEnd;
     turnMargin = relativeAng;
@@ -1303,7 +1703,8 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     leftpower = 0, rightpower = 0;
     movementtype = 8;
     stopdrive(0);
@@ -1336,7 +1737,8 @@ public:
 
   void arc(float x1, float y1, float x2, float y2, float speed,
            float breakLength, float arcCtKP, float arcHdgKP,
-           float alignMargin, bool backward = false) {
+           float alignMargin, bool backward = false,
+           float turnMaxSpeed = 12) {
     // compute arc through current position, midpoint (x1,y1), endpoint (x2,y2)
     computeArc(chassis.x, chassis.y, x1, y1, x2, y2);
     arc_backward = backward;
@@ -1350,6 +1752,9 @@ public:
     if (alignMargin > 0 && fabs(chassis.wrapangle(tangentHeading - chassis.h)) > alignMargin) {
       chassis.htarg = tangentHeading;
       turnPID.reset();
+      turnPID.scalePID = true;
+      turnPID.headingMode = false;
+      turnPID.maxOutput = turnMaxSpeed;
       leftpower = 0, rightpower = 0;
       movementtype = 1; //SPOT TURN
       stopdrive(0);
@@ -1382,7 +1787,7 @@ public:
       float dx = chassis.x - x2;
       float dy = chassis.y - y2;
       float dot = dx * tx + dy * ty;
-      if (dot <= 0) break;
+      if (dot > 0) break;
 
       delay(10);
     }
@@ -1390,6 +1795,8 @@ public:
     movementtype = 0;
     leftpower = 0;
     rightpower = 0;
+    chassis.xtarg = x2;
+    chassis.ytarg = y2;
 
   }
 
@@ -1412,7 +1819,8 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     leftpower = 0, rightpower = 0;
     movementtype = 8;
     stopdrive(0);
@@ -1461,7 +1869,8 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     leftpower = 0, rightpower = 0;
     movementtype = 8.2;
     stopdrive(0);
@@ -1509,7 +1918,8 @@ public:
     turnPID.maxOutput = hspeed;
     drivePID.slewAmount = slew;
     drivePID.setConstants(ykp, drivePID.ki, drivePID.kd);
-    turnPID.setConstants(hkp, 0, turnPID.kd);
+    turnPID.scalePID = false;
+    turnPID.headingMode = true;
     leftpower = 0, rightpower = 0;
     movementtype = 9;
     stopdrive(0);

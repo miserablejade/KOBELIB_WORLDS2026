@@ -1,14 +1,25 @@
 #include "movement_globals.h"
 #include "vex.h"
 
-
 class PID // versatile PID class
 {
 private:
   float count = 0;
 
 public:
+  bool scalePID = false;
+  bool scalablePID = false;
+  bool headingMode = false;
+  bool newPidCycle = false;
+  float turnKI;
   float kp, ki, kd;
+  float fallbackKP, fallbackKD;
+  float _0DegKP, _0DegKD;
+  float _90DegKP, _90DegKD;
+  float _180DegKP, _180DegKD;
+  float _270DegKP, _270DegKD;
+  float _360DegKP, _360DegKD;
+
   float maxintegral, integralbound, integralmargin;
   float cur, targ, error = 0, lasterror = 0, deltaerror, sumerror;
   float output, maxOutput, prevOutput;
@@ -29,7 +40,81 @@ public:
     kd = KD;
   }
 
+  void setFallbackConstants(float KP, float KD) {
+    fallbackKP = KP;
+    fallbackKD = KD;
+  }
+
+  void setScalableConstants(float KI,
+    float _0DEGKP, float _0DEGKD,
+    float _90DEGKP, float _90DEGKD, 
+    float _180DEGKP, float _180DEGKD,
+    float _270DEGKP, float _270DEGKD,
+    float _360DEGKP, float _360DEGKD) {
+    turnKI = KI;
+
+    _0DegKP = _0DEGKP;
+    _0DegKD = _0DEGKD;
+
+    _90DegKP = _90DEGKP;
+    _90DegKD = _90DEGKD;
+
+    _180DegKP = _180DEGKP;
+    _180DegKD = _180DEGKD;
+
+    _270DegKP = _270DEGKP;
+    _270DegKD = _270DEGKD;
+
+    _360DegKP = _360DEGKP;
+    _360DegKD = _360DEGKD;
+  }
+
+  void scaleConstants(float error) {
+    if (error >= 0 && error <= 45) {
+      kp = _0DegKP;
+      kd = _0DegKD;
+    }
+
+    if (error > 45 && error <= 135) {
+      kp = _90DegKP;
+      kd = _90DegKD;
+    }
+
+    if (error > 135 && error <= 225) {
+      kp = _180DegKP;
+      kd = _180DegKD;
+    }
+
+    if (error > 225 && error <= 315) {
+      kp = _270DegKP;
+      kd = _270DegKD;
+    }
+
+    if (error > 315) {
+      kp = _360DegKP;
+      kd = _360DegKD;
+    }
+  }
+
   float calculate(float inputError) { // PID calculation using the input as the error
+    if (newPidCycle) {
+      if (scalablePID && scalePID) {
+        scaleConstants(fabs(inputError));
+        ki = turnKI;
+      } 
+      if (scalablePID && not scalePID && not headingMode) {
+        ki = turnKI;
+        kp = fallbackKP;
+        kd = fallbackKD;
+      }
+      if (scalablePID && not scalePID && headingMode) {
+        ki = 0;
+        kp = _0DegKP;
+        kd = _0DegKD;
+      }
+      newPidCycle = false;
+    }
+
     error = inputError;
     deltaerror = error - lasterror;
     if (signum(deltaerror) == signum(error))

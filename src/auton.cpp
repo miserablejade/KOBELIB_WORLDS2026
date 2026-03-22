@@ -1,9 +1,9 @@
-
 #include "vex.h"
 #include "movement.h"
 #include "threads.h"
 #include <climits>
 #include <cstdlib>
+#include <iterator>
 #include <utility>
 using namespace vex;
 #include <cmath>
@@ -15,18 +15,31 @@ float endtime = 0;
 float starttime = 0;
 
 // ANGULAR PID CONSTANTS
-float  TKP = 0.316; //2; //0.29
-float  TKI = 0.01; //0.01
-float  TKD = 2; //19.25; //1.9
+float TKI = 0.01;
+
+float _0DegTKP = 0.27;
+float _0DegTKD = 1.4;
+
+float _90DegTKP = 0.27;
+float _90DegTKD = 1.46;
+
+float _180DegTKP = 0.2;
+float _180DegTKD = 1.2;
+
+float _270DegTKP = 0.2;
+float _270DegTKD = 1.38;
+
+float _360DegTKP = 0.2; 
+float _360DegTKD = 1.38;
 
 // HEADING PID CONSTANTS
-float HKP = TKP;
-float HKD = TKD;
+float HKP = _0DegTKP;
+float HKD = _0DegTKD;
 
 // LINEAR PID CONSTANTS
-float YKP = 1.3;
+float YKP = 1.1; //1.3
 float YKI = 0;
-float YKD = 10;
+float YKD = 5.5; //10
 
 // ARC CORRECTION CONSTANTS
 float ARC_CT_KP = 1;  // cross-track P (distance from arc)
@@ -89,7 +102,22 @@ void auto_settings() {
   turnPID.integralbound = 10;
   turnPID.maxintegral = 2;
 
-  intakeMode = coasting;
+  move.seamlessTransitions = false;
+
+  turnPID.scalePID = true;
+  drivePID.scalePID = false;
+
+  turnPID.scalablePID = true;
+  drivePID.scalablePID = false;
+
+  turnPID.setScalableConstants(
+  TKI,
+  _0DegTKP, _0DegTKD,
+  _90DegTKP, _90DegTKD,
+  _180DegTKP, _180DegTKD,
+  _270DegTKP, _270DegTKD,
+  _360DegTKP, _360DegTKD
+);
   
 }
 
@@ -100,7 +128,7 @@ float angleDiff(float target, float current) {
   while (diff < -180) diff += 360;
 
   return diff;
-}
+}                                                                                                                          
 
 ///////////////////////////////////////////////////////////////////////////////////////
 //  __          __     _      _        _____  ______          _____ _____ _   _  _____
@@ -288,39 +316,39 @@ void driveBackward(float dist, float heading = chassis.h, float breakdist = 3, f
 }
 
 // Easy turning motions
-void face(float heading, float breakang = 8) {
+void face(float heading, float breakang = 8, int dir = 0) {
 
-  move.face(heading, TKP, TKI, TKD, amaxSpeed, breakang);
-
-}
-
-void facePoint(float x, float y, float breakang = 8, bool backward = false) {
-
-  move.facePoint(x, y, TKP, TKI, TKD, amaxSpeed, breakang, backward);
+  move.face(heading, amaxSpeed, breakang, dir);
 
 }
 
-void swingOnRight(float heading, float breakang = 8, bool backward = false) {
+void facePoint(float x, float y, float breakang = 8, bool backward = false, int dir = 0) {
 
-  move.swingOnRight(heading, TKP, TKI, TKD, amaxSpeed, breakang);
-
-}
-
-void swingOnLeft(float heading, float breakang = 8, bool backward = false) {
-
-  move.swingOnLeft(heading, TKP, TKI, TKD, amaxSpeed, breakang);
+  move.facePoint(x, y, amaxSpeed, breakang, backward, dir);
 
 }
 
-void swingOnRightToPoint(float x, float y, float breakang = 8, bool backward = false) {
+void swingOnRight(float heading, float breakang = 8, bool backward = false, int dir = 0) {
 
-  move.swingOnRighttoPoint(x, y, TKP, TKI, TKD, amaxSpeed, breakang, backward);
+  move.swingOnRight(heading, amaxSpeed, breakang, dir);
 
 }
 
-void swingOnLeftToPoint(float x, float y, float breakang = 8, bool backward = false) {
+void swingOnLeft(float heading, float breakang = 8, bool backward = false, int dir = 0) {
 
-  move.swingOnLefttoPoint(x, y, TKP, TKI, TKD, amaxSpeed, breakang, backward);
+  move.swingOnLeft(heading, amaxSpeed, breakang, dir);
+
+}
+
+void swingOnRightToPoint(float x, float y, float breakang = 8, bool backward = false, int dir = 0) {
+
+  move.swingOnRighttoPoint(x, y, amaxSpeed, breakang, backward, dir);
+
+}
+
+void swingOnLeftToPoint(float x, float y, float breakang = 8, bool backward = false, int dir = 0) {
+
+  move.swingOnLefttoPoint(x, y, amaxSpeed, breakang, backward, dir);
 
 }
 
@@ -402,7 +430,7 @@ void swingOnRightAndStraightTo(float x, float y, bool backward = false, float br
 ////////////////////////////////////////////////////////////////////////////////////////////////
 enum TurnType {spot, leftswing, rightswing, noturn};
 
-void moveTo(float x, float y, bool backward = false, float breaklength = 8, float turnmargin = 40, TurnType turnType = spot, float yspeed = ymaxSpeed, float hspeed = hmaxSpeed, float ykP = YKP, float hkP = TKP, float tkD = TKD) {
+void moveTo(float x, float y, bool backward = false, float breaklength = 8, float turnmargin = 60, TurnType turnType = spot, float yspeed = ymaxSpeed, float hspeed = hmaxSpeed, float ykP = YKP, float hkP = HKP) {
   if (backward) {
     move.bto(x, y, yspeed, hspeed, ykP, hkP, slew, breaklength, turnmargin);
   }
@@ -423,7 +451,7 @@ void moveTo(float x, float y, bool backward = false, float breaklength = 8, floa
 
 }
 
-void goTo(float x, float y, bool backward = false, float breaklength = 8, float breakang = 3, float yspeed = ymaxSpeed, float hspeed = hmaxSpeed, float ykP = YKP, float hkP = TKP, float tkD = TKD) {
+void goTo(float x, float y, bool backward = false, float breaklength = 8, float breakang = 3, float yspeed = ymaxSpeed, float hspeed = hmaxSpeed, float ykP = YKP, float hkP = HKP) {
 
   facePoint(x, y, breakang, backward);
   moveTo(x, y, backward, breaklength, breakang, spot, yspeed, hspeed, ykP, hkP);
@@ -431,8 +459,8 @@ void goTo(float x, float y, bool backward = false, float breaklength = 8, float 
 
 }
 
-void swingOnLeftAndGoTo(float x, float y, bool backward = false, float breaklength = 8, float breakang = 10, float yspeed = ymaxSpeed, float hspeed = hmaxSpeed, float ykP = YKP, float hkP = TKP, float tkD = TKD) {
-  move.swingOnLefttoPoint(x, y, TKP, TKI, TKD, amaxSpeed, breakang, backward);
+void swingOnLeftAndGoTo(float x, float y, bool backward = false, float breaklength = 8, float breakang = 10, float yspeed = ymaxSpeed, float hspeed = hmaxSpeed, float ykP = YKP, float hkP = HKP) {
+  move.swingOnLefttoPoint(x, y, amaxSpeed, breakang, backward);
 
   if (backward) {
     move.bto(x, y, yspeed, hspeed, ykP, hkP, slew, breaklength);
@@ -444,8 +472,8 @@ void swingOnLeftAndGoTo(float x, float y, bool backward = false, float breakleng
 
 }
 
-void swingOnRightAndGoTo(float x, float y, bool backward = false, float breaklength = 8, float breakang = 10, float yspeed = ymaxSpeed, float hspeed = hmaxSpeed, float ykP = YKP, float hkP = TKP, float tkD = TKD) {
-  move.swingOnRighttoPoint(x, y, TKP, TKI, TKD, amaxSpeed, breakang, backward);
+void swingOnRightAndGoTo(float x, float y, bool backward = false, float breaklength = 8, float breakang = 10, float yspeed = ymaxSpeed, float hspeed = hmaxSpeed, float ykP = YKP, float hkP = HKP) {
+  move.swingOnRighttoPoint(x, y, amaxSpeed, breakang, backward);
 
   if (backward) {
     move.bto(x, y, yspeed, hspeed, ykP, hkP, slew, breaklength);
@@ -479,8 +507,8 @@ void boomerangTo(
     float timeout = 0,
     float drive_kp = YKP,
     float drive_kd = YKD,
-    float heading_kp = TKP,
-    float heading_kd = TKD
+    float heading_kp = HKP,
+    float heading_kd = HKD
 ) {
 
   move.boomerang(x, y, target_heading, backward,
@@ -506,8 +534,8 @@ void boomerangToFacePoint(
     float timeout = 0,
     float drive_kp = YKP,
     float drive_kd = YKD,
-    float heading_kp = TKP,
-    float heading_kd = TKD
+    float heading_kp = HKP,
+    float heading_kd = HKD
 ) {
 
   float target_heading = calculateTargetHeading(faceX, faceY, backward, x, y);
@@ -521,6 +549,80 @@ void boomerangToFacePoint(
                  breaklength);
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//   _____ _   _  _____ ______ _____ _______ _____ ____  _   _   ____   ____   ____  __  __
+//  |_   _| \ | |/ ____|  ____|  __ \__   __|_   _/ __ \| \ | | |  _ \ / __ \ / __ \|  \/  |
+//    | | |  \| | |    | |__  | |__) | | |    | || |  | |  \| | | |_) | |  | | |  | | \  / |
+//    | | | . ` | |    |  __| |  ___/  | |    | || |  | | . ` | |  _ <| |  | | |  | | |\/| |
+//   _| |_| |\  | |____| |____| |      | |   _| || |__| | |\  | | |_) | |__| | |__| | |  | |
+//  |_____|_| \_|\_____|______|_|      |_|  |_____\____/|_| \_| |____/ \____/ \____/|_|  |_|
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void _2029BoomerangTo(
+    float x, float y, float target_heading,
+    bool backward = false,
+    float exit_dist = 3,
+    float dLead = 15.0,
+    float gLead = 0.4,
+    float min_voltage = 0,
+    float drive_max = ymaxSpeed,
+    float heading_max = hmaxSpeed,
+    float settle_error = 3,
+    float timeout = 0,
+    float close_end_dist = 8.0,
+    float close_ghost_dist = 20.0,
+    float parallel_dist = 8.0,
+    float drive_kp = YKP,
+    float drive_kd = YKD,
+    float heading_kp = HKP,
+    float heading_kd = HKD
+) {
+
+  move.inceptionBoomerang(x, y, target_heading, backward,
+                          drive_kp, drive_kd,
+                          heading_kp, heading_kd,
+                          drive_max, heading_max,
+                          dLead, gLead,
+                          min_voltage, settle_error,
+                          slew, timeout,
+                          close_end_dist, close_ghost_dist,
+                          parallel_dist, exit_dist);
+}
+
+void _2029BoomerangToFacePoint(
+    float x, float y,
+    float faceX, float faceY,
+    bool backward = false,
+    float exit_dist = 3,
+    float dLead = 15.0,
+    float gLead = 0.4,
+    float min_voltage = 0,
+    float drive_max = ymaxSpeed,
+    float heading_max = hmaxSpeed,
+    float settle_error = 3,
+    float timeout = 0,
+    float close_end_dist = 8.0,
+    float close_ghost_dist = 20.0,
+    float parallel_dist = 8.0,
+    float drive_kp = YKP,
+    float drive_kd = YKD,
+    float heading_kp = HKP,
+    float heading_kd = HKD
+) {
+
+  float target_heading = calculateTargetHeading(faceX, faceY, backward, x, y);
+
+  move.inceptionBoomerang(x, y, target_heading, backward,
+                          drive_kp, drive_kd,
+                          heading_kp, heading_kd,
+                          drive_max, heading_max,
+                          dLead, gLead,
+                          min_voltage, settle_error,
+                          slew, timeout,
+                          close_end_dist, close_ghost_dist,
+                          parallel_dist, exit_dist);
+}
+
 ///////////////////////////////////////////////////////////////////
 //    _____ _    _ _______      ________   _______ ____
 //   / ____| |  | |  __ \ \    / /  ____| |__   __/ __ \
@@ -530,7 +632,7 @@ void boomerangToFacePoint(
 //   \_____|\____/|_|  \_\  \/   |______|    |_|  \____/
 ///////////////////////////////////////////////////////////////////
 
-void curveTo(float x1, float y1, float x2, float y2, float lookDist = 12, float breakLength = 5, TurnType turnType = noturn, float breakang = 8, float yspeed = ymaxSpeed, float hspeed = hmaxSpeed, float ykp = YKP, float hkp = TKP) {
+void curveTo(float x1, float y1, float x2, float y2, float lookDist = 12, float breakLength = 5, TurnType turnType = noturn, float breakang = 8, float yspeed = ymaxSpeed, float hspeed = hmaxSpeed, float ykp = YKP, float hkp = HKP) {
   // Compute the true Bezier control point: cp = p1 * 2 - (p0 + p2) / 2
   // where p0 = current position, p1 = pass-through point, p2 = end point
   float cpX = x1 * 2 - (chassis.x + x2) / 2;
@@ -559,25 +661,25 @@ void curveTo(float x1, float y1, float x2, float y2, float lookDist = 12, float 
 
 void sweepOnLeft(float heading, float sweepRatio, float breakang = 8) {
   sweep_ratio = sweepRatio;
-  move.swingOnLeft(heading, TKP, TKI, TKD, amaxSpeed, breakang);
+  move.swingOnLeft(heading, amaxSpeed, breakang);
   sweep_ratio = 0;
 }
 
 void sweepOnRight(float heading, float sweepRatio, float breakang = 8) {
   sweep_ratio = sweepRatio;
-  move.swingOnRight(heading, TKP, TKI, TKD, amaxSpeed, breakang);
+  move.swingOnRight(heading, amaxSpeed, breakang);
   sweep_ratio = 0;
 }
 
 void sweepOnLeftToPoint(float x, float y, float sweepRatio, float breakang = 8, bool backward = false) {
   sweep_ratio = sweepRatio;
-  move.swingOnLefttoPoint(x, y, TKP, TKI, TKD, amaxSpeed, breakang, backward);
+  move.swingOnLefttoPoint(x, y, amaxSpeed, breakang, backward);
   sweep_ratio = 0;
 }
 
 void sweepOnRightToPoint(float x, float y, float sweepRatio, float breakang = 8, bool backward = false) {
   sweep_ratio = sweepRatio;
-  move.swingOnRighttoPoint(x, y, TKP, TKI, TKD, amaxSpeed, breakang, backward);
+  move.swingOnRighttoPoint(x, y, amaxSpeed, breakang, backward);
   sweep_ratio = 0;
 }
 
@@ -591,7 +693,7 @@ void sweepOnRightToPoint(float x, float y, float sweepRatio, float breakang = 8,
 /////////////////////////////////////
 
 void arcTo(float x1, float y1, float x2, float y2, float speed = ymaxSpeed, float breakLength = 5, bool backward = false, float arcCtKP = ARC_CT_KP, float arcHdgKP = ARC_HDG_KP, float alignMargin = 8) {
-  move.arc(x1, y1, x2, y2, speed, breakLength, arcCtKP, arcHdgKP, alignMargin, backward, TKP, TKI, TKD, amaxSpeed);
+  move.arc(x1, y1, x2, y2, speed, breakLength, arcCtKP, arcHdgKP, alignMargin, backward, amaxSpeed);
 }
 
 ///////////////////////////////////////////////////////
@@ -602,10 +704,6 @@ void arcTo(float x1, float y1, float x2, float y2, float speed = ymaxSpeed, floa
 //  | |    _| |_| |__| | | |  | | |__| | |__| |____) |
 //  |_|   |_____|_____/  |_|  |_|\____/|_____/|_____/
 ///////////////////////////////////////////////////////
-
-float oldTKP = TKP;
-float oldTKI = TKI;
-float oldTKD = TKD;
 
 float oldHKP = HKP;
 float oldHKD = HKD;
@@ -618,8 +716,8 @@ float oldARC_CT_KP = ARC_CT_KP;
 float oldARC_HDG_KP = ARC_HDG_KP;
 
 void modifyAngularPID(float newTKP, float newTKD) {
-  TKP = newTKP;
-  TKD = newTKD;
+  turnPID.scalePID = false;
+  turnPID.setFallbackConstants(newTKP, newTKD);
 }
 
 void modifyHeadingPID(float newHKP, float newHKD) {
@@ -638,9 +736,7 @@ void modifyArcGains(float newCtKP, float newHdgKP) {
 }
 
 void revertToOriginalPIDs() {
-  TKP = oldTKP;
-  TKI = oldTKI;
-  TKD = oldTKD;
+  turnPID.scalePID = true;
 
   HKP = oldHKP;
   HKD = oldHKD;
@@ -690,6 +786,17 @@ void distanceToPointDrop(double x1, double y1, double dist1, double time1, doubl
 
 int delayedMatchloaderDropFcn() {
   while (true) {
+    if (runDelayedDrop) {
+      delay(dropMatchloaderIn);
+      matchloaderDown();
+      if (dropMatchloaderFor > 0) {
+        delay(dropMatchloaderFor);
+        matchloaderUp();
+        dropMatchloaderFor = 0;
+      }
+    runDelayedDrop = false; 
+    }
+
     if (drop1Active) {
       double dist = sqrt(pow(chassis.x - dropX1, 2) + pow(chassis.y - dropY1, 2));
       if (dist <= dropDist1) {
@@ -713,6 +820,53 @@ int delayedMatchloaderDropFcn() {
   return(0);
 }
 
+//CONSTANTS ////////////////////////////////////////////////////////////////
+double longGoalX = 48;
+double longGoalY = -30;
+
+double trueLongGoalX = 48;
+double trueLongGoalY = -24.240;
+
+double matchloaderX = 46;
+double matchloaderY = -63;
+
+double trueMatchloaderY = -55.6;
+
+void scoreLong(double flip, double time2, double time1 = 400) {
+  boomerangTo(flip*longGoalX, trueLongGoalY, 180, true, 8, 0.6, 8);
+  // _2029BoomerangTo(flip * longGoalX, trueLongGoalY, 180, true, 8, 12);
+  ymaxSpeed = 8;
+  driveBackward(20, 180, 0);
+  delay(time1);
+  hoodUp();
+  intakeMode = longGoal;
+  face(180, 0);
+  delay(time2*0.3);
+  move.voldrive(-10,-10);
+  delay(time2*0.7);
+  ymaxSpeed = 12.7;
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void SmallTest(){
   auto_settings();
   ymaxSpeed = 12.7;
@@ -720,11 +874,14 @@ void SmallTest(){
   slew = 0;
   bangbangDist = 0;
 
-  chassis.setPos(-24,0,180);
-  
-  arcTo(0, -36, 24, 0, 8);
+  chassis.setPos(trueLongGoalX, trueLongGoalY, 180);
 
+  face(-90);
+  _2029BoomerangTo(-24, -24, -90, false, 8, 48);
+  goTo(-48, -50);
+  move.voldrive(0,0);
   delay(5000000);
+
 }
 
 void HookProcedure() {
@@ -738,11 +895,9 @@ void HookProcedure() {
 
   float originalHeading = chassis.h;
 
-  modifyAngularPID(TKP*100, TKD*0);
+  modifyAngularPID(100, 0);
   swingOnRight(originalHeading+47, 5);
   revertToOriginalPIDs();
-  // driveForward(6);
-  revertToOriginalPIDs(); 
   face(originalHeading+7);
 
 }
@@ -809,171 +964,136 @@ void arpit() {
 
 }
 
-void tenB(bool hook) {
+void tenB() {
   auto_settings();
   ymaxSpeed = 12.7;
   hmaxSpeed = ymaxSpeed;
   slew = 12.7;
   bangbangDist = 0;
+  move.ptpCosineScaling = true;
+
   intakeMode = intake;
   midDescoreDown();
 
-  hookDown();
+  hookUp();
 
   chassis.setPos(-13, -45.82,0);
 
   readWall(3, 3,true);
   readWall(4,4, true);
 
-  delayedDrop(400, 0);
+  delayedDrop(450, 0);
 
-  moveTo(-27, -17, false, 10, 10, spot, 12);
+  moveTo(-22, -24, false, 12, 60);
   matchloaderUp();
 
-  delayedDrop(280, 2000);
-  moveTo(-48, -4, false, 14);
-  delay(0);
+  delayedDrop(550, 0);
 
+  ymaxSpeed = 7;
+  moveTo(-42, -10, false, 0);
+  delay(1000);
+
+  ymaxSpeed = 12.7;
+  face(-90);
+  delay(100);
+
+  //Back up
   hmaxSpeed = 6;
-  drivePID.minOutput = 8;
+  drive_min_output = 8;
+  move.ptpCosineScaling = false;
   moveTo(-24, -24, true, 12);
-  drivePID.minOutput = 0;
-  moveTo(-39, -47, true, 12);
+  drive_min_output = 0;
 
-  swingOnLeft(180);
+  moveTo(-48, -39, true, 6);
+
+  move.ptpCosineScaling = true;
+  revertToOriginalPIDs();
+
+  face(180);
+
   readWall(3, 1);
-  revertToOriginalPIDs();
-  modifyLateralPID(YKP, YKD*0.7);
-  moveTo(-46, -18, true, 13, 3);
-  matchloaderUp();
-  revertToOriginalPIDs();
 
-  intakeMode = longGoal;
-  move.voldrive(-10,-10);
-  delay(500);
-  face(180, 0);
-  delay(500);
-  move.voldrive(-10, -10);
-  delay(500);
-  chassis.setPos(-48,-18.62,180);
-
-  if (hook) {
-    hookDown();
-    face(135);
-    modifyLateralPID(YKP*5, 0);
-    driveForward(6.5, 135);
-    face(180);
-    modifyLateralPID(YKP, YKD*0.7);
-    revertToOriginalPIDs();
-    driveBackward(28, 170, 0, 12);
-  }
 }
 
-void tenBRight() {
+void sevenRush() {
   auto_settings();
   ymaxSpeed = 12.7;
   hmaxSpeed = ymaxSpeed;
   slew = 12.7;
   bangbangDist = 0;
+  move.ptpCosineScaling = true;
+
   intakeMode = intake;
   midDescoreDown();
 
-  hookDown();
+  hookUp();
 
-  chassis.setPos(13, -45.82,0);
+  chassis.setPos(-13, -45.82,0);
 
-  readWall(1, 1,true);
+  readWall(3, 3,true);
   readWall(4,4, true);
 
-  delayedDrop(400, 0);
+  delayedDrop(450, 0);
 
-  moveTo(27, -17, false, 10, 10, spot, 12);
-  matchloaderUp();
+  moveTo(-22, -24, false, 12, 60);
 
-  delayedDrop(280, 2000);
-  moveTo(48, -4, false, 14);
-  delay(0);
+  //To matchloader
 
-  hmaxSpeed = 6;
-  drivePID.minOutput = 8;
-  moveTo(24, -24, true, 12);
-  drivePID.minOutput = 0;
-  moveTo(39, -40, true, 12);
+  ymaxSpeed = 9;
+  facePoint(-matchloaderX, matchloaderY + calculateStraightlineDist(-matchloaderX, matchloaderY)*0.2 + 6);
+  boomerangTo(-matchloaderX+2, matchloaderY, 180, false, 8, 0.2, 6);
 
-  swingOnRight(180);
-  delay(100);
-  readWall(1, 3);
-  modifyLateralPID(YKP, YKD*0.7);
-  facePoint(48, 24, 3, true);
-  moveTo(48, -20, true, 13, 3);
-  matchloaderUp();
-  revertToOriginalPIDs();
 
+  // goTo(-44, -48);
+
+  // straightlineTo(-matchloaderX, matchloaderY, false, 8);
+
+  delay(800);
+
+  // why does the boomerang on line 1007 cross the line of the lead (dyk what i mean) and then try to curve back? i am not noticing any wheel slip
+
+  ymaxSpeed = 10;
+  _2029BoomerangTo(-longGoalX, longGoalY, 180, true, 12);
+  driveBackward(20, 180, 0);
+  delay(400);
+  hoodUp();
   intakeMode = longGoal;
-  move.voldrive(-10,-10);
-  delay(500);
-  face(180, 0);
-  delay(500);
-  move.voldrive(-10, -10);
-  delay(700);
-  chassis.setPos(-46,-18.62,180);
+  delay(1500);
 
-  hookDown();
-  face(135);
-  modifyLateralPID(YKP*5, YKD*0);
-  driveForward(6.5, 135);
-  face(180);
-  modifyLateralPID(YKP, YKD*0.7);
-  revertToOriginalPIDs();
-  modifyLateralPID(YKP*4, YKD*0.8);
-  driveBackward(25, 170, 0, 12);
-  delay(500);
-  leftdrive.stop(hold);
-  rightdrive.stop(hold);
+  driveForward(8);
+  hoodDown();
+
+  drivePID.minOutput = 8;
+  driveBackward(12);
+
+  move.voldrive(0,0);
+  delay(50000000);
 
 }
 
-void hookInsurance(bool reset = true) {
-  hookUp();
-
-  matchloaderDown();
-
-  if (reset) {
-    face(180, 3);
-    readWall(4, 2);
-    readWall(3, 1, true);
 
 
-    intakeMode = intake;
-    boomerangTo(-48, -40, -135, false);
-
-    face(180, 0);
-    delay(400);
-    readWall(3, 1);
-  }
-
-  intakeMode = intake;
-  ymaxSpeed = 4;
-  moveTo(-48, -68, false, 0);
-  delay(1500);
-  ymaxSpeed = 12.7;
-  chassis.setPos(chassis.x, -55.34, chassis.h);
-
-  matchloaderUp();
-  move.voldrive(-12,-12);
-  delay(50);
-  ymaxSpeed = 8;
-  boomerangTo(-24, -24, -135, true, 8, 0.9);
-
-  ymaxSpeed = 5;
-  moveTo(-8,-8, true, 12);
-
-  move.voldrive(0,0);
-  intakeMode = midGoal;
-  delay(2000);
 
 
-  matchloaderUp();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void tenBRight() {
+ 
 }
 
 void SOLO() {
@@ -986,49 +1106,78 @@ void SOLO() {
 
   hookUp();
 
-  chassis.setPos(0,0,90);
-  readWall(1, 2, true);
-  readWall(4, 1, true);
-
+  chassis.setPos(0,0,270);
+  //readWall(1, 4, true);
+  readWall(4, 3, true);
   intakeMode = intake;
-  straightTo(46.5, chassis.y);
+  modifyLateralPID(YKP, 0);
+  driveForward(8, chassis.h, 0);
+  delay(500);
+  revertToOriginalPIDs();
+  //voltagedrive(3, 3);
+  drivePID.minOutput = 12.7;
+  straightTo(46.5, chassis.y, true, 0);
+  delay(250);
+  drivePID.minOutput = 0;
+  modifyLateralPID(YKP*0.8, YKD*1.3);
+  straightTo(47.5, -45, true, 3);
+  face(180);
+  delay(80);
+  readWall(1, 3, false);
+  revertToOriginalPIDs();
   matchloaderDown();
 
-  face(180);
-  readWall(1, 3);
-
-  straightlineTo(48, -65, false, 12, 5, 6);
-  delay(900);
-
-  modifyLateralPID(YKP, YKD*0.5);
+  straightlineTo(48, -67, false, 0, 5, 6);
+  delay(1000);
+  
+  ymaxSpeed = 8;
+  boomerangTo(48, -24, 180, true, 12);
   intakeMode = topStageJamInsurance;
-  moveTo(48, -24, true, 12);
   matchloaderUp();
-
+  move.voldrive(-7, -7);
   intakeMode = longGoal;
-  move.voldrive(-10,-10);
-  delay(500);
-  face(180, 0);
-  delay(500);
-  move.voldrive(-10, -10);
+  delay(50);
+  hoodUp();
   delay(600);
-
-  chassis.setPos(48,-28.982,chassis.h);
-
-  intakeMode = intake;
-  face(-90);
-  readWall(4, 3);
+  revertToOriginalPIDs();
 
   ymaxSpeed = 12.7;
-
-  // delayedDrop(250, 0);
+  chassis.setPos(48, -28.982, chassis.h);
+  //swingOnRightToPoint(-20, -24, 5, false);
+  modifyLateralPID(YKP*0.8, YKD*1.3);
+  facePoint(-19, -25);
+  ymaxSpeed = 10;
+  hoodDown();
+  distanceToPointDrop(-19, -25, 24, 1000);
+  straightTo(-19, -25, false, 8, 6);
+  facePoint(-48, -48);
+  revertToOriginalPIDs();
+  moveTo(-40, -45, false, 10, 20);
+  delay(80);
+  face(180);
+  readWall(3, 1);
+  ymaxSpeed = 8;
+  boomerangTo(-48, -28, 180, true, 8);
+  move.voldrive(-7, -7);
+  hoodUp();
+  intakeMode = longGoal;
+  matchloaderDown();
+  delay(600);
+  straightlineTo(-48, -67, false, 0, 5, 6);
+  hoodDown();
+  intakeMode = intake;
+  delay(1000);
+  sweepOnLeftToPoint(-20, -20, 0.2, 8, true);
+  moveTo(-7, -10, true, 12);
+  drop4bar();
+  intakeMode = midGoal;
   // moveTo(24, -24, false, 12);
   // matchloaderUp();
 
-  delayedDrop(800, 0);
-  moveTo(-24, -24, false, 12);
+  //moveTo(-20, -24, false, 10);
+  //intakeMode = intake;
 
-  intakeMode = topStageJamInsurance;
+  /*intakeMode = topStageJamInsurance;
   goTo(-46, -48, false);
   face(180);
   readWall(3, 1);
@@ -1071,9 +1220,7 @@ void SOLO() {
   delay(100000);
 
 
-  matchloaderUp();
-
-
+  matchloaderUp();*/
 
 }
 
@@ -1139,154 +1286,75 @@ void rightSplit() {
 }
 
 void twoMidGoals() {
-  auto_settings();
-  ymaxSpeed = 12.7;
-  hmaxSpeed = ymaxSpeed;
-  slew = 12.7;
-  bangbangDist = 0;
-  intakeMode = intake;
-  midDescoreDown();
+  tenB();
 
-  hookUp();
-
-  chassis.setPos(-13, -45.82,0);
-
-  readWall(3, 3,true);
-  readWall(4,4, true);
-
-  delayedDrop(400, 0);
-
-  moveTo(-27, -17, false, 10, 10, spot, 12);
-  matchloaderUp();
-
-  delayedDrop(280, 4000);
-  moveTo(-48, -5, false, 10);
-
-  hmaxSpeed = 6;
-  drivePID.minOutput = 8;
-  moveTo(-24, -24, true, 12);
-  drivePID.minOutput = 0;
-  moveTo(-50, -40, true, 12);
-
-  face(180);
-  readWall(3, 1);
-
+  matchloaderDown();
   ymaxSpeed = 6;
-  straightlineTo(-48, -68, false, 15);
+  straightlineTo(-46, -60, false, 15);
+  delay(1000);
+  chassis.setPos(chassis.x, -55.6, chassis.h);
+  ymaxSpeed = 12.7;
+
+  intakeMode = antiSpill;
+  delay(100);
+  drop4bar();
+  _2029BoomerangTo(-10, -13, -135, true, 8);
+
+  matchloaderUp();
+  move.voldrive(-3,-3);
+  delay(250);
+  //intakeMode = onlyTopStage;
+  move.voldrive(0,0);
+  delay(1000);
+
+  intakeMode = antiSpill;
+
+  modifyAngularPID(10, 0);
+  move.bigTime = 150;
+  swingOnLeft(180);
+
+  move.bigTime = 150;
+  revertToOriginalPIDs();
+  swingOnLeftToPoint(8, -8);
+
+  ymaxSpeed = 8;
+  modifyLateralPID(YKP, YKD*0.8);
+  driveForward(18, chassis.h, 0);
   delay(500);
   ymaxSpeed = 12.7;
 
-  //TO OTHER SIDEEEEEEE
-
-  sweepOnLeftToPoint(20, -20, 0.2, 8, true);
-  moveTo(20, -20, true, 8);
-
-  spitIn = 200;
-  intakeMode = spit;
-  facePoint(0,0);
-  modifyLateralPID(YKP, YKD*0.5);
-  driveForward(24, -45, 16);
-  revertToOriginalPIDs();
-  delay(300);
-  spitIn = 0;
-
-  intakeMode = intake;
-
-  move.bigTime = 100;
-  sweepOnLeftToPoint(-36, -6, 0.05, 8, true);
-  modifyLateralPID(YKP*3, 0);
-  moveTo(-48, -8, true, 25);
   move.bigTime = 300;
-  revertToOriginalPIDs();
+  swingOnLeft(-45, 0);
+  delay(500);
 
-  face(170);
-  delay(100);
+  midDescoreUp();
+  intakeMode = spit;
+  move.voldrive(-1,-1);
+  delay(500);
+  move.voldrive(0,0);
+  delay(500);
 
-  hookDown();
-  driveForward(32, 170);
-  hookUp();
+  swingOnLeft(45);
+  driveBackward(5);
+  facePoint(-3, 0, 8, true);
 
-  face(180);
-  readWall(3, 1);
-  readWall(4, 2);
+  drivePID.minOutput = 8;
+  driveBackward(24, 135, 0);
+  delay(300);
+  move.voldrive(0,0);
+  delay(500);
 
-  ymaxSpeed = 10;
-  facePoint(-10,-11, 5, true);
-  moveTo(-10, -11, true, 10);
-  move.voldrive(-2, -2);
-  intakeMode = midGoal;
-  delay(500000);
+  face(135, 3);
+  driveForward(0.5, chassis.h, 0);
+  delay(500);
 
+
+  delay(500000000);
 }
 
 void sixRush() {
-  tenB();
+  //tenB();
   leftdrive.stop(hold);
   rightdrive.stop(hold);
   delay(500000);
-}
-
-void sixRushWithInsurance() {
-  tenB();
-
-  while (chassis.h > 170) {
-    delay(10);
-  }
-
-  hookInsurance();
-}
-
-void sixRushSplitQUAL() {
-  tenB();
-  delay(700);
-  hookInsurance();
-}
-
-void sixRushSplit() {
-  tenB(false);
-  delay(700);
-  hookInsurance(false);
-  ymaxSpeed = 12.7;
-  moveTo(-36, -27, false,10);
-  face(180);
-  hookDown();
-  driveBackward(24);
-  leftdrive.stop(hold);
-  rightdrive.stop(hold);
-}
-
-void leaveGoal() {
-  driveForward(25, 180, 10, 12);
-}
-
-
-
-
-void hkMovement() {
-  auto_settings();
-  ymaxSpeed = 12.7;
-  hmaxSpeed = ymaxSpeed;
-  slew = 12.7;
-  bangbangDist = 0;
-  intakeMode = intake;
-  
-  chassis.setPos(24, 60, 0);
-  matchloaderDown();
-
-  delay(500);
-
-  boomerangTo(27, 40, -70, true, 15, 0.8);
-
-  drivePID.minOutput = 8;
-  move.turndisablelength = 5;
-  moveTo(34, 36, false, 8, 120);
-  drivePID.minOutput = 0;
-
-  modifyAngularPID(TKP*0.5, TKD);
-  driveForward(24, 180);
-
-
-  leftdrive.stop(brake);
-  rightdrive.stop(brake);
-
 }

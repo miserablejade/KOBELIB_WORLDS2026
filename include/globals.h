@@ -142,8 +142,8 @@ extern double offsetPrint;
 void matchloaderUp();
 void matchloaderDown();
 
-void hook1Up();
-void hook1Down();
+void hookUp();
+void hookDown();
 void hook2Up();
 void hook2Down();
 
@@ -172,6 +172,8 @@ int controllerScreenTask(void);
 int brainScreenTaskFcn();
 int delayedMatchloaderDropFcn();
 extern int midGoalSpeed;
+
+extern void drop4bar();
 
 extern bool runDelayedDrop;
 extern double dropMatchloaderIn;

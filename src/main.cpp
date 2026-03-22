@@ -1,4 +1,3 @@
-
 #include "vex.h"
 #include "threads.h"
 #include "movement.h"
@@ -32,21 +31,21 @@ motor_group rightdrive = motor_group(fr, mr, br);
 
 // Odometry and Heading
 inertial IMU1 = inertial(PORT5);
-inertial IMU2 = inertial(PORT5);
+inertial IMU2 = inertial(PORT4);
 
 rotation TX = rotation(PORT6, false);
 rotation TY = rotation(PORT21, true);
 
 //Tracker wheel effective diameter
-double txD = 2.02;
-double tyD = 2.03;
+double txD = 2;
+double tyD = 2*1.01265822785;
 
 //Tracker wheel offsets
-double txOffset = 2.7422;
-double tyOffset = -1.8884;
+double txOffset =  -2.222126924; //-1.684495946.    //2.222126924
+double tyOffset = -1.050972841; //-7/8  //1.050972841
 
 //IMU Multiplier
-double imu_multiplier = 0.9938888889;
+double imu_multiplier = 1.00676;
 
 //Wall reading distance sensors
 distance DistSensor1 = distance(PORT8);
@@ -412,6 +411,8 @@ double score3Time = 500;
 bool firstLongGoal = false;
 bool dump3 = false;
 
+bool intakeLag = false;
+
 // Intake Control Task
 int magControlFcn() {
   while (true) {
@@ -434,11 +435,14 @@ int magControlFcn() {
           lowGoalFcn(false);
         }
 
+        upperRollers.spin(reverse, 100, percent);
+        intakeRollers.spin(reverse, 70, percent);
+
         break;
 
       case (coasting):
         coastAllRollers();
-        if (wasJustIntaking) {
+        if (wasJustIntaking && intakeLag) {
           upperRollers.spin(forward, 100, percent); //make sure the blocks are pressing against the hood, makes scoring more consistent
           delay(500);
         }
@@ -467,6 +471,8 @@ int magControlFcn() {
         break;
 
       case (midGoalSlow):
+        upperRollers.spin(forward, 50, percent);
+        intakeRollers.stop(coast);
 
         break;
 
@@ -485,6 +491,16 @@ int magControlFcn() {
         delay(200);
 
         break;
+
+      case (antiSpill):
+        intakeRollers.spin(forward, 100, percent);
+        upperRollers.spin(reverse, 100, percent);
+
+        break;
+
+      //case (onlyTopStage):
+        //intakeRollers.stop(coast);
+        //upperRollers.spin(forward,50,percent);
     }
 
     if (justDropped4Bar) {
@@ -647,7 +663,11 @@ int brainScreenTaskFcn() {
     Brain.Screen.printAt(350,235, "D4: %.5f   ", DistSensor4.objectDistance(inches));
     }
 
-    Brain.Screen.printAt(5, 130, "Max IMU Delta: %.3f deg/cycle   ", chassis.maxDeltaRecorded);
+    // Tracking wheel inches for offset tuning
+    double txInches = TX.position(deg) * txD * M_PI / 360.0;
+    double tyInches = TY.position(deg) * tyD * M_PI / 360.0;
+    Brain.Screen.printAt(5, 120, "TX: %.5f in   ", txInches);
+    Brain.Screen.printAt(5, 145, "TY: %.5f in   ", tyInches);
 
     vex::this_thread::sleep_for(50);
   }
@@ -705,6 +725,9 @@ void autonomous(void) {
 
   didAuton = true;
 
+
+  // sevenRush();
+  // tenB();
   // hkMovement();
   // sixRushSplit();
   // arpitWithInsurance();
@@ -714,8 +737,8 @@ void autonomous(void) {
   // arpit();
   // tenBRight();
   // rightSplit();
-  delay(5000000);
   // SOLO();
+  delay(5000000);
   // FastRightSide();
 
   if (autonIndex == 0) {
@@ -728,19 +751,19 @@ void autonomous(void) {
     sixRush();
 
   } else if (autonIndex == 3) {
-    sixRushSplit();
+
   } else if (autonIndex == 4) {
-    rightSplit();
+
   } else if (autonIndex == 5) {
-    rightSplit();
+
   } else if (autonIndex == 6) {
-    rightSplit();
+
   } else if (autonIndex == 7) {
-    rightSplit();
+
   } else if (autonIndex == 8) {
-    rightSplit();
+
   } else if (autonIndex == 9) {
-    rightSplit();
+
   }
     
   // delay(9999999999999); Used to be delay but I think was causing issues
@@ -875,9 +898,13 @@ void usercontrol(void) {
 
   if (didAuton) {
     hookUnlocked = true;
+    matchloaderUp();
+    liftOdom();
   } else {
     hookUnlocked = false;
   }
+
+  intakeLag = true;
 
   while (true) {
     //BUTTON MONITOR////////////////////////////////////
@@ -957,7 +984,7 @@ void usercontrol(void) {
     /////////////////////////////////////////////////////
 
     //COASTING///////////////////////////////////////////
-    if (not l2Pressed_first && not r2Pressed_first && not r1Pressed_first) {
+    if (not l2Pressed_first && not r2Pressed_first && not r1Pressed_first && not l1Pressed_first) {
       intakeMode = coasting;
       firstLongGoal = false;
     }

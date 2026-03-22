@@ -27,7 +27,7 @@ void arpitWithInsurance();
 void leftSplitMidGoal();
 void SOLO();
 
-void tenB(bool hook = true);
+//void tenB(bool hook = true);
 void sixRushWithInsurance();
 void sixRush();
 void sixRushSplit();

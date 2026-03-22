@@ -44,7 +44,7 @@ class robot
   double rawH2 = IMU2.rotation();
   double lastRawH2;
 
-  double max_allowed_change = 360;
+  double max_allowed_change = 36000;
   bool tossIMU1 = false;
   bool tossIMU2 = false;
   bool firstFilterCycle = true;
@@ -114,8 +114,8 @@ class robot
     }
   hradians = TO_RAD(h); 
   perpindiculartracker = TX.position(deg) * 1;
-  paralleltracker = mr.position(deg) * 1; // Used to use motor encoder, used to be *-1
-  // paralleltracker = mr.position(deg) * -1; //USING VERTICAL ODOM
+  paralleltracker = TY.position(deg) * -1; // Used to use motor encoder, used to be *-1
+  // paralleltracker = TY.position(deg) * -1; //USING VERTICAL ODOM
   }
 
   void resetData() {
@@ -131,8 +131,8 @@ class robot
 
     h = 0;
     TX.setPosition(0, deg);
-    mr.setPosition(0, deg); //USING MOTOR ENCODER
-    // mr.setPosition(0, deg); //USING VERTICAL ODOM
+    TY.setPosition(0, deg); //USING MOTOR ENCODER
+    // TY.setPosition(0, deg); //USING VERTICAL ODOM
     perpindiculartracker = 0, paralleltracker = 0; // tracking wheel inputs
     lasthradians = 0, hradians = 0; // previous robot targets
     x = 0, y = 0; // global coordinates
@@ -154,8 +154,8 @@ class robot
     lasthradians = hradians;
 
     TX.setPosition(0, deg);
-    mr.setPosition(0, deg); //USING MOTOR ENCODER
-    // mr.setPosition(0, deg); //USING VERTICAL ODOM
+    TY.setPosition(0, deg); //USING MOTOR ENCODER
+    // TY.setPosition(0, deg); //USING VERTICAL ODOM
     perpindiculartracker = 0, paralleltracker = 0; // tracking wheel inputs
     xtarg = x, ytarg = y, htarg = h; // robot targets
     lastperpindiculartracker = 0, lastparalleltracker = 0;
